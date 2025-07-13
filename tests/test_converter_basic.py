@@ -1,6 +1,7 @@
 import subprocess
 from pathlib import Path
-
+import shutil
+import pytest
 from pdf2pdfa.converter import Converter
 
 DATA_DIR = Path(__file__).parent / 'data'
@@ -14,5 +15,8 @@ def test_convert_basic(tmp_path):
     conv.convert(str(input_pdf), str(output_pdf))
 
     assert output_pdf.exists()
+
+    if shutil.which('verapdf') is None:
+        pytest.skip('verapdf command not available')
 
     subprocess.run(['verapdf', '-q', '--exit-zero', str(output_pdf)], check=True)
