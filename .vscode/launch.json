@@ -1,0 +1,13 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run pdf2pdfa convert",
+            "type": "python",
+            "request": "launch",
+            "module": "pdf2pdfa.cli",
+            "args": ["convert", "${workspaceFolder}/tests/data/sample.pdf", "${workspaceFolder}/output.pdf"],
+            "console": "integratedTerminal"
+        }
+    ]
+}
