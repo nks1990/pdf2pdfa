@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf2pdfa"
+version = "0.1.0"
+description = "Convert arbitrary PDF files to PDF/A-1b"
+authors = [{name = "Your Name", email = "you@example.com"}]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+
+dependencies = [
+    "pikepdf>=4.0.0",
+    "fonttools>=4.0.0",
+    "lxml>=4.0.0",
+    "click>=7.0",
+    "importlib_resources; python_version<'3.9'",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=6.0",
+]
+
+[project.scripts]
+pdf2pdfa = "pdf2pdfa.cli:cli"
+
+[tool.setuptools.package-data]
+pdf2pdfa = ["data/sRGB.icc.b64"]

@@ -1,0 +1,12 @@
+__pycache__/
+build/
+dist/
+*.egg-info/
+*.pyc
+*.pyo
+*.pyd
+ENV/
+.venv/
+
+tests/data/sample.pdf
+pdf2pdfa/data/sRGB.icc
