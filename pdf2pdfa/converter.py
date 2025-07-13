@@ -121,7 +121,6 @@ class Converter:
         # Set up document dates
         # ------------------------------------------------------------------
         now = dt.datetime.utcnow().replace(microsecond=0)
-        pdf_date = now.strftime("D:%Y%m%d%H%M%S+00'00'")
         xmp_date = now.isoformat() + "Z"
 
         # ------------------------------------------------------------------
@@ -160,19 +159,12 @@ class Converter:
             md["xmp:ModifyDate"] = xmp_date
 
         # ------------------------------------------------------------------
-        # Mirror XMP values back into the Info dictionary
+        # Do not update pdf.docinfo directly when using set_pikepdf=True.
+        # PikePDF will sync values from XMP on save and warns if we modify
+        # docinfo here, because any changes would be overwritten.
         # ------------------------------------------------------------------
-        info[Name.Title] = String(title)
-        info[Name.Author] = String(author)
-        if subject:
-            info[Name.Subject] = String(subject)
-        if keywords:
-            info[Name.Keywords] = String(keywords)
-        info[Name.Producer] = String(producer)
-        info[Name.Creator] = String("pdf2pdfa")
-        info[Name.CreationDate] = String(pdf_date)
-        info[Name.ModDate] = String(pdf_date)
-        pdf.docinfo = info
+
+
 
         # ------------------------------------------------------------------
         # Save PDF/A
