@@ -120,8 +120,8 @@ class Converter:
         # ------------------------------------------------------------------
         # Set up document dates
         # ------------------------------------------------------------------
-        now = dt.datetime.utcnow().replace(microsecond=0)
-        xmp_date = now.isoformat() + "Z"
+        now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        xmp_date = now.isoformat()
 
         # ------------------------------------------------------------------
         # Existing info dictionary values
@@ -131,16 +131,16 @@ class Converter:
         author = str(info.get(Name.Author, ""))
         subject = str(info.get(Name.Subject, ""))
         keywords = str(info.get(Name.Keywords, ""))
-        producer = str(info.get(Name.Producer, "pdf2pdfa"))
 
         # ------------------------------------------------------------------
         # Update XMP metadata
         # ------------------------------------------------------------------
-        try:
-            meta_ctx = pdf.open_metadata(set_pikepdf=True)
-        except TypeError:  # pragma: no cover - older pikepdf versions
-            meta_ctx = pdf.open_metadata(set_pikepdf_as_editor=True)
+        meta_ctx = pdf.open_metadata(set_pikepdf_as_editor=True)
 
+        # pikepdf will sync metadata from XMP to the document info dictionary on
+        # save. When metadata is opened with ``set_pikepdf_as_editor=True`` any
+        # direct edits to ``pdf.docinfo`` are ignored and raise warnings.
+        # Therefore all fields are written only through the XMP object.
         with meta_ctx as md:
             md["pdfaid:part"] = "1"
             md["pdfaid:conformance"] = "B"
@@ -154,14 +154,18 @@ class Converter:
             if keywords:
                 md["pdf:Keywords"] = keywords
             md["xmp:CreatorTool"] = "pdf2pdfa"
-            md["pdf:Producer"] = producer
             md["xmp:CreateDate"] = xmp_date
             md["xmp:ModifyDate"] = xmp_date
 
+        # Reopen metadata without pikepdf injection to set Producer; doing this
+        # separately avoids warnings about the field being overwritten.
+        with pdf.open_metadata(set_pikepdf_as_editor=False) as md:
+            md["pdf:Producer"] = f"pikepdf {pikepdf.__version__} (pdf2pdfa)"
+
         # ------------------------------------------------------------------
-        # Do not update pdf.docinfo directly when using set_pikepdf=True.
-        # PikePDF will sync values from XMP on save and warns if we modify
-        # docinfo here, because any changes would be overwritten.
+        # Do not update ``pdf.docinfo`` directly when ``set_pikepdf_as_editor``
+        # is used. PikePDF will sync values from XMP on save and warns if we
+        # modify docinfo here, because any changes would be overwritten.
         # ------------------------------------------------------------------
 
 
@@ -179,4 +183,18 @@ class Converter:
             logger.error("Failed to save PDF %s: %s", output_path, exc)
             raise
         logger.info("Saved PDF/A-1b to %s", output_path)
+
+        # ------------------------------------------------------------------
+        # Verify that XMP and docinfo are in sync
+        # ------------------------------------------------------------------
+        with Pdf.open(output_path) as out_pdf:
+            with out_pdf.open_metadata() as md:
+                info = out_pdf.docinfo
+                title_md = md.get("dc:title")
+                assert str(info.get(Name.Title, "")) == str(title_md or "")
+                creators = md.get("dc:creator", [])
+                if creators:
+                    assert str(info.get(Name.Author, "")) == creators[0]
+                descr_md = md.get("dc:description")
+                assert str(info.get(Name.Subject, "")) == str(descr_md or "")
 

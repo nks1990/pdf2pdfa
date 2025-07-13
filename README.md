@@ -1,38 +1,54 @@
 # pdf2pdfa
 
-`pdf2pdfa` converts PDF files into PDF/A-1b compliant documents.
+**pdf2pdfa** is a simple tool that converts ordinary PDF files into PDF/A-1b compliant documents. It bundles a lightweight command line interface and an easy to use Python API so you can integrate archival conversion in scripts or larger applications.
+
+## Features
+
+- Converts existing PDFs to fully compliant PDF/A-1b.
+- Automatically embeds missing fonts for reliable rendering.
+- Attaches an sRGB ICC profile to ensure correct colour reproduction.
+- Cleans and normalises document metadata.
+- Provides both a CLI and a Python library.
 
 ## Installation
+
+The package is available on PyPI:
 
 ```bash
 pip install pdf2pdfa
 ```
 
-## Command Line Usage
+## Command line usage
+
+Convert a document directly from the terminal:
 
 ```bash
 pdf2pdfa convert input.pdf output.pdf
 ```
 
-Use `--icc PATH` to supply a custom ICC color profile.
+You can optionally provide a custom ICC profile using `--icc PATH`.
 
-## Library Usage
+## Library usage
 
 ```python
 from pdf2pdfa import Converter
 
 conv = Converter()
-conv.convert('input.pdf', 'output.pdf')
+conv.convert("input.pdf", "output.pdf")
 ```
 
-## Testing
+The converter embeds fonts and the default sRGB profile automatically. Pass an alternative profile or font path if needed.
 
-Tests require the `verapdf` CLI to validate PDF/A compliance:
+## Development and testing
+
+Run the unit tests with `pytest`. If the `verapdf` command line tool is installed it will also validate the generated files for PDF/A compliance.
 
 ```bash
 pytest
 ```
 
+Contributions are welcome! Feel free to open issues or pull requests on GitHub.
+
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+This project is released under the MIT license. See the [LICENSE](LICENSE) file for details.
