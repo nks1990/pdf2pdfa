@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 import shutil
@@ -19,8 +20,8 @@ def test_convert_basic(tmp_path):
     if shutil.which('verapdf') is None:
         pytest.skip('verapdf command not available')
 
-    subprocess.run(
-    ['cmd', '/c', 'verapdf', '-q', '--exit-zero', str(output_pdf)],
-    check=True
-)
+    cmd = ['verapdf', '-q', '--exit-zero', str(output_pdf)]
+    if os.name == 'nt':
+        cmd = ['cmd', '/c'] + cmd
+    subprocess.run(cmd, check=True)
 
