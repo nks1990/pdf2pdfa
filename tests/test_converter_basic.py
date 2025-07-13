@@ -19,4 +19,8 @@ def test_convert_basic(tmp_path):
     if shutil.which('verapdf') is None:
         pytest.skip('verapdf command not available')
 
-    subprocess.run(['verapdf', '-q', '--exit-zero', str(output_pdf)], check=True)
+    subprocess.run(
+    ['cmd', '/c', 'verapdf', '-q', '--exit-zero', str(output_pdf)],
+    check=True
+)
+
