@@ -7,12 +7,39 @@ from pathlib import Path
 from typing import Iterable
 
 from fontTools import subset
+from fontTools.ttLib import TTFont
 from pikepdf import Pdf, Name, Dictionary, Array
 
 logger = logging.getLogger(__name__)
 
 
 DEFAULT_FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+
+
+def _extract_metrics(tt: TTFont) -> dict[str, object]:
+    """Return metrics for *tt* scaled to 1000 units."""
+    upem = tt['head'].unitsPerEm
+    ascent = tt['hhea'].ascent
+    descent = tt['hhea'].descent
+    bbox = [tt['head'].xMin, tt['head'].yMin, tt['head'].xMax, tt['head'].yMax]
+    os2 = tt['OS/2'] if 'OS/2' in tt else None
+    cap_height = getattr(os2, 'sCapHeight', ascent)
+    italic_angle = tt['post'].italicAngle
+    widths = []
+    cmap = tt.getBestCmap()
+    hmtx = tt['hmtx'].metrics
+    for code in range(32, 256):
+        gname = cmap.get(code, '.notdef')
+        adv = hmtx.get(gname, hmtx.get('.notdef'))[0]
+        widths.append(int(round(adv * 1000 / upem)))
+    return {
+        'bbox': [int(round(v * 1000 / upem)) for v in bbox],
+        'ascent': int(round(ascent * 1000 / upem)),
+        'descent': int(round(descent * 1000 / upem)),
+        'cap_height': int(round(cap_height * 1000 / upem)),
+        'italic_angle': italic_angle,
+        'widths': widths,
+    }
 
 
 def subset_and_embed_fonts(pdf: Pdf, font_path: str = DEFAULT_FONT_PATH) -> None:
@@ -32,6 +59,7 @@ def subset_and_embed_fonts(pdf: Pdf, font_path: str = DEFAULT_FONT_PATH) -> None
         return
 
     font_data = path.read_bytes()
+    metrics = _extract_metrics(TTFont(str(path)))
 
     for page in pdf.pages:
         fonts = page.Resources.get('/Font')
@@ -51,11 +79,11 @@ def subset_and_embed_fonts(pdf: Pdf, font_path: str = DEFAULT_FONT_PATH) -> None
                     '/Type': Name('/FontDescriptor'),
                     '/FontName': font.get('/BaseFont', Name('/DejaVuSans')),
                     '/Flags': 32,
-                    '/FontBBox': Array([0, -200, 1000, 900]),
-                    '/Ascent': 800,
-                    '/Descent': -200,
-                    '/CapHeight': 700,
-                    '/ItalicAngle': 0,
+                    '/FontBBox': Array(metrics['bbox']),
+                    '/Ascent': metrics['ascent'],
+                    '/Descent': metrics['descent'],
+                    '/CapHeight': metrics['cap_height'],
+                    '/ItalicAngle': metrics['italic_angle'],
                     '/StemV': 80,
                     '/FontFile2': stream,
                 }
@@ -65,6 +93,6 @@ def subset_and_embed_fonts(pdf: Pdf, font_path: str = DEFAULT_FONT_PATH) -> None
             font['/FontDescriptor'] = desc
             font['/FirstChar'] = 32
             font['/LastChar'] = 255
-            font['/Widths'] = Array([600] * 224)
+            font['/Widths'] = Array(metrics['widths'])
             font['/Encoding'] = Name('/WinAnsiEncoding')
 

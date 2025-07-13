@@ -5,7 +5,9 @@
 ## Features
 
 - Converts existing PDFs to fully compliant PDF/A-1b.
-- Automatically embeds missing fonts for reliable rendering.
+- Automatically embeds missing fonts for reliable rendering. If a font is not
+  present in the source PDF, it is replaced by DejaVu Sans and fully embedded
+  with correct metrics to preserve layout.
 - Attaches an sRGB ICC profile to ensure correct colour reproduction.
 - Cleans and normalises document metadata.
 - Provides both a CLI and a Python library.
