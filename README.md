@@ -1,20 +1,29 @@
 # pdf2pdfa
 
-**pdf2pdfa** is a simple tool that converts ordinary PDF files into PDF/A-1b compliant documents. It bundles a lightweight command line interface and an easy to use Python API so you can integrate archival conversion in scripts or larger applications.
+**pdf2pdfa** converts ordinary PDF documents into fully compliant **PDF/A‑1b** files. The library offers both a simple command line tool and a Python API so that archival conversion can easily be automated or integrated into larger systems.
 
 ## Features
 
-- Converts existing PDFs to fully compliant PDF/A-1b.
-- Automatically embeds missing fonts for reliable rendering. If a font is not
-  present in the source PDF, it is replaced by DejaVu Sans and fully embedded
-  with correct metrics to preserve layout.
-- Attaches an sRGB ICC profile to ensure correct colour reproduction.
-- Cleans and normalises document metadata.
-- Provides both a CLI and a Python library.
+- Converts any PDF into valid PDF/A‑1b
+- Embeds missing fonts automatically (using a fallback TrueType font)
+- Attaches an sRGB ICC profile for consistent colour management
+- Cleans and synchronises document metadata
+- Usable from the command line or as a library
+
+## Requirements
+
+Python 3.7 or newer is needed. The following packages are installed automatically when using `pip`:
+
+- [pikepdf](https://pikepdf.readthedocs.io/)
+- [fonttools](https://github.com/fonttools/fonttools)
+- [lxml](https://lxml.de/)
+- [click](https://click.palletsprojects.com/)
+
+For validation of the generated files you can optionally install [`verapdf`](https://github.com/veraPDF/veraPDF-library).
 
 ## Installation
 
-The package is available on PyPI:
+Install the latest release from PyPI:
 
 ```bash
 pip install pdf2pdfa
@@ -22,13 +31,11 @@ pip install pdf2pdfa
 
 ## Command line usage
 
-Convert a document directly from the terminal:
-
 ```bash
 pdf2pdfa convert input.pdf output.pdf
 ```
 
-You can optionally provide a custom ICC profile using `--icc PATH`.
+`--icc PATH` can be used to specify a custom ICC profile.
 
 ## Library usage
 
@@ -39,18 +46,27 @@ conv = Converter()
 conv.convert("input.pdf", "output.pdf")
 ```
 
-The converter embeds fonts and the default sRGB profile automatically. Pass an alternative profile or font path if needed.
+If fonts are missing from the source PDF the converter tries to embed a common system font (e.g. DejaVu Sans). You may also supply a specific font path.
 
 ## Development and testing
 
-Run the unit tests with `pytest`. If the `verapdf` command line tool is installed it will also validate the generated files for PDF/A compliance.
+Clone the repository and install the development requirements:
+
+```bash
+pip install -e .[test]
+```
+
+Run the unit tests using `pytest`. When `verapdf` is available the tests also check that the output conforms to PDF/A‑1b.
 
 ```bash
 pytest
 ```
 
-Contributions are welcome! Feel free to open issues or pull requests on GitHub.
-
 ## License
 
-This project is released under the MIT license. See the [LICENSE](LICENSE) file for details.
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are very welcome. Feel free to open issues or submit pull requests on GitHub.
+
