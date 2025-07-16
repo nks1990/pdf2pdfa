@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Menu con Tools</title>
+<style>
+nav ul { list-style: none; padding: 0; margin: 0; display: flex; }
+nav li { margin-right: 1em; }
+.hamburger { display: none; cursor: pointer; user-select: none; }
+@media(max-width: 600px) {
+  nav ul { display: none; flex-direction: column; }
+  nav.active ul { display: flex; }
+  .hamburger { display: block; }
+}
+.card { border: 1px solid #ccc; padding: 1em; margin-top: 1em; }
+</style>
+</head>
+<body>
+<nav id="main-nav">
+  <span class="hamburger" onclick="toggleMenu()">&#9776;</span>
+  <ul>
+    <li><a href="#">Movimenti</a></li>
+    <li><a href="#tools">Tools</a></li>
+    <li><a href="#">Impostazioni</a></li>
+  </ul>
+</nav>
+
+<section id="tools">
+  <h2>Tools</h2>
+  <div class="card">
+    <h3>Calcolo Balcone</h3>
+    <form>
+      <label><input type="radio" name="tipo" value="piena"> Soletta Piena</label><br>
+      <label><input type="radio" name="tipo" value="laterocemento"> Laterocemento</label>
+    </form>
+  </div>
+</section>
+
+<script>
+function toggleMenu() {
+  var nav = document.getElementById('main-nav');
+  if (nav.classList.contains('active')) {
+    nav.classList.remove('active');
+  } else {
+    nav.classList.add('active');
+  }
+}
+</script>
+</body>
+</html>
