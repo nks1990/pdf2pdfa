@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "pdf2pdfa"
 version = "0.1.0"
 description = "Convert arbitrary PDF files to PDF/A-1b"
-authors = [{name = "Your Name", email = "you@example.com"}]
+authors = [{name = "nks1990", email = "nks1990@example.com"}]
 license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.7"
@@ -21,6 +21,7 @@ dependencies = [
     "lxml>=4.0.0",
     "click>=7.0",
     "importlib_resources; python_version<'3.9'",
+    "reportlab>=4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,10 @@ test = [
 
 [project.scripts]
 pdf2pdfa = "pdf2pdfa.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pdf2pdfa*"]
 
 [tool.setuptools.package-data]
 pdf2pdfa = ["data/sRGB.icc.b64"]
