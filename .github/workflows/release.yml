@@ -28,3 +28,5 @@ jobs:
         with:
           environment: pypi
           skip-existing: true
+          # se nel form hai indicato "Environment name = pypi":
+          #  environment: pypi
