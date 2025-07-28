@@ -3,15 +3,16 @@ name: Publish to PyPI
 on:
   push:
     tags:
-      - "v*.*.*"        # parte al push di un tag tipo v0.1.0
+      - "v*.*.*"
 
 permissions:
-  id-token: write       # NECESSARIO per OIDC
+  id-token: write
   contents: read
 
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
+    environment: pypi          # <- QUESTA RIGA AGGIUNTA
 
     steps:
       - uses: actions/checkout@v4
@@ -21,11 +22,11 @@ jobs:
           python-version: '3.11'
 
       - run: python -m pip install --upgrade build
-
-      - run: python -m build          # genera dist/*.whl e dist/*.tar.gz
+      - run: python -m build
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1   # <— fix qui
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          environment: pypi        # rimuovi se non hai creato l’environment
+          environment: pypi     # ok perché ora il run è *dentro* quell’environment
           skip-existing: true
+
