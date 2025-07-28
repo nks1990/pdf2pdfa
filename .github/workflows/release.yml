@@ -12,7 +12,7 @@ permissions:
 jobs:
   build-and-publish:
     runs-on: ubuntu-latest
-    environment: pypi          # <- QUESTA RIGA AGGIUNTA
+    environment: pypi  # Questa riga è corretta
 
     steps:
       - uses: actions/checkout@v4
@@ -27,6 +27,5 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          environment: pypi     # ok perché ora il run è *dentro* quell’environment
           skip-existing: true
-
+          # Rimuovi "environment: pypi" da qui
