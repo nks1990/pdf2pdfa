@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf2pdfa"
-version = "3.0.0"
-description = "Convert arbitrary PDF files to PDF/A-1b"
+version = "3.1.0"
+description = "Convert arbitrary PDF files to PDF/A (1b, 2b, 3b)"
 authors = [{name = "nks1990", email = "nks1990@users.noreply.github.com"}]
 license = {text = "MIT"}
 readme = "README.md"

@@ -3,7 +3,7 @@
 [![CI](https://github.com/nks1990/pdf2pdfa/actions/workflows/ci.yml/badge.svg)](https://github.com/nks1990/pdf2pdfa/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/pdf2pdfa)](https://pypi.org/project/pdf2pdfa/)
 
-Convert ordinary PDF documents into fully compliant **PDF/A-1b** files.
+Convert ordinary PDF documents into fully compliant **PDF/A** files (1b, 2b, 3b).
 
 ## Installation
 
@@ -21,6 +21,15 @@ Requires Python 3.9+.
 pdf2pdfa convert input.pdf output.pdf
 ```
 
+### Choose PDF/A level
+
+```bash
+pdf2pdfa convert input.pdf output.pdf --level 2b
+pdf2pdfa batch *.pdf --level 3b
+```
+
+Supported levels: `1b` (default), `2b`, `3b`.
+
 ### Batch conversion
 
 ```bash
@@ -31,6 +40,7 @@ pdf2pdfa batch *.pdf
 
 | Flag | Description |
 |------|-------------|
+| `--level LEVEL` | PDF/A conformance level: `1b`, `2b`, `3b` (default: `1b`) |
 | `--icc PATH` | Custom ICC profile |
 | `--font PATH` | Custom TrueType font for embedding |
 | `--validate` | Run verapdf validation after conversion |
@@ -41,8 +51,11 @@ pdf2pdfa batch *.pdf
 ```python
 from pdf2pdfa import Converter
 
-conv = Converter()
+conv = Converter()                    # PDF/A-1b (default)
 conv.convert("input.pdf", "output.pdf")
+
+conv = Converter(level="2b")          # PDF/A-2b
+conv.convert("input.pdf", "output_2b.pdf")
 ```
 
 ## What it does
@@ -51,8 +64,14 @@ conv.convert("input.pdf", "output.pdf")
 - Embeds missing fonts with correct WinAnsiEncoding width metrics
 - Attaches sRGB ICC profile with proper `/N` on the stream dictionary
 - Replaces DeviceRGB/DeviceCMYK color spaces with ICC-based equivalents
-- Sets PDF/A-1b conformance in XMP metadata
+- Sets PDF/A conformance in XMP metadata (1b, 2b, or 3b)
 - Synchronizes XMP and document info dictionary
+
+## v3.1.0 Highlights
+
+- **New**: Multi-level PDF/A support — `--level 1b` (default), `--level 2b`, `--level 3b`
+- Python API: `Converter(level="2b")`
+- OutputIntent `/S` correctly uses `/GTS_PDFA1` for all PDF/A levels per ISO 19005
 
 ## v3.0.0 Highlights
 

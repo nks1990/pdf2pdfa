@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging")
 def cli(verbose: bool) -> None:
-    """pdf2pdfa - Convert PDF to PDF/A-1b."""
+    """pdf2pdfa - Convert PDF to PDF/A (1b, 2b, 3b)."""
     if verbose:
         logging.getLogger("pdf2pdfa").setLevel(logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
@@ -28,14 +28,15 @@ def cli(verbose: bool) -> None:
 @click.argument("output", type=click.Path())
 @click.option("--icc", type=click.Path(), default=None, help="Path to ICC profile")
 @click.option("--font", type=click.Path(), default=None, help="Path to TrueType font")
+@click.option("--level", type=click.Choice(["1b", "2b", "3b"], case_sensitive=False), default="1b", help="PDF/A conformance level (default: 1b)")
 @click.option("--validate", is_flag=True, help="Run verapdf validation after conversion")
-def convert(input: str, output: str, icc: str, font: str, validate: bool) -> None:
-    """Convert INPUT PDF to PDF/A-1b OUTPUT."""
+def convert(input: str, output: str, icc: str, font: str, level: str, validate: bool) -> None:
+    """Convert INPUT PDF to PDF/A OUTPUT."""
     from .converter import Converter
 
-    conv = Converter(icc_path=icc)
+    conv = Converter(icc_path=icc, level=level)
     conv.convert(input, output, font_path=font)
-    click.echo(f"Converted {input} -> {output}")
+    click.echo(f"Converted {input} -> {output} (PDF/A-{level})")
 
     if validate:
         _run_verapdf(output)
@@ -46,16 +47,17 @@ def convert(input: str, output: str, icc: str, font: str, validate: bool) -> Non
 @click.option("--suffix", default="_pdfa", help="Suffix for output files (default: _pdfa)")
 @click.option("--icc", type=click.Path(), default=None, help="Path to ICC profile")
 @click.option("--font", type=click.Path(), default=None, help="Path to TrueType font")
+@click.option("--level", type=click.Choice(["1b", "2b", "3b"], case_sensitive=False), default="1b", help="PDF/A conformance level (default: 1b)")
 @click.option("--validate", is_flag=True, help="Run verapdf validation after conversion")
-def batch(inputs: tuple, suffix: str, icc: str, font: str, validate: bool) -> None:
-    """Convert multiple PDFs to PDF/A-1b."""
+def batch(inputs: tuple, suffix: str, icc: str, font: str, level: str, validate: bool) -> None:
+    """Convert multiple PDFs to PDF/A."""
     from .converter import Converter
 
     if not inputs:
         click.echo("No input files specified.", err=True)
         sys.exit(1)
 
-    conv = Converter(icc_path=icc)
+    conv = Converter(icc_path=icc, level=level)
     for inp in inputs:
         p = Path(inp)
         out = p.with_stem(p.stem + suffix)

@@ -1,4 +1,4 @@
-"""PDF/A-1b conversion logic."""
+"""PDF/A conversion logic (supports PDF/A-1b, 2b, 3b)."""
 
 from __future__ import annotations
 
@@ -17,15 +17,28 @@ from .icc import embed_icc_profile
 logger = logging.getLogger(__name__)
 
 
-class Converter:
-    """Convert arbitrary PDF to PDF/A-1b."""
+_VALID_LEVELS = {"1b", "2b", "3b"}
 
-    def __init__(self, icc_path: Optional[str] = None) -> None:
+
+class Converter:
+    """Convert arbitrary PDF to PDF/A (1b, 2b, or 3b)."""
+
+    def __init__(
+        self,
+        icc_path: Optional[str] = None,
+        level: str = "1b",
+    ) -> None:
+        level = level.lower()
+        if level not in _VALID_LEVELS:
+            raise ValueError(
+                f"Invalid PDF/A level '{level}'. Must be one of: {', '.join(sorted(_VALID_LEVELS))}"
+            )
+        self.level = level
         if icc_path is not None:
             self.icc_path = icc_path
         else:
             self.icc_path = str(files(__package__).joinpath('data/sRGB.icc.b64'))
-        logger.debug("Using ICC profile at %s", self.icc_path)
+        logger.debug("Using ICC profile at %s (level=PDF/A-%s)", self.icc_path, self.level)
 
     def convert(
         self,
@@ -34,9 +47,12 @@ class Converter:
         icc_profile: Optional[str] = None,
         font_path: Optional[str] = None,
     ) -> None:
-        """Convert *input_path* to PDF/A-1b and save as *output_path*."""
+        """Convert *input_path* to PDF/A and save as *output_path*."""
 
-        logger.info("Converting %s -> %s", input_path, output_path)
+        part = self.level[0]        # "1", "2", or "3"
+        conformance = self.level[1].upper()  # "B"
+
+        logger.info("Converting %s -> %s (PDF/A-%s)", input_path, output_path, self.level)
 
         try:
             pdf = Pdf.open(input_path)
@@ -83,8 +99,8 @@ class Converter:
         # Update XMP metadata
         # ------------------------------------------------------------------
         with pdf.open_metadata(set_pikepdf_as_editor=True) as md:
-            md["pdfaid:part"] = "1"
-            md["pdfaid:conformance"] = "B"
+            md["pdfaid:part"] = part
+            md["pdfaid:conformance"] = conformance
             md["dc:format"] = "application/pdf"
             if title:
                 md["dc:title"] = title
@@ -112,7 +128,7 @@ class Converter:
         except Exception as exc:
             logger.error("Failed to save PDF %s: %s", output_path, exc)
             raise
-        logger.info("Saved PDF/A-1b to %s", output_path)
+        logger.info("Saved PDF/A-%s to %s", self.level, output_path)
 
         # ------------------------------------------------------------------
         # Verify XMP / docinfo sync (non-fatal)
