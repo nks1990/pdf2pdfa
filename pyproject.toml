@@ -4,24 +4,27 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf2pdfa"
-version = "0.1.0"
+version = "3.0.0"
 description = "Convert arbitrary PDF files to PDF/A-1b"
-authors = [{name = "nks1990", email = "nks1990@example.com"}]
+authors = [{name = "nks1990", email = "nks1990@users.noreply.github.com"}]
 license = {text = "MIT"}
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
 ]
 
 dependencies = [
-    "pikepdf>=4.0.0",
+    "pikepdf>=8.0.0",
     "fonttools>=4.0.0",
     "lxml>=4.0.0",
-    "click>=7.0",
-    "importlib_resources; python_version<'3.9'",
-    "reportlab>=4.0.0",
+    "click>=8.0",
 ]
 
 [project.optional-dependencies]
@@ -32,9 +35,14 @@ test = [
 [project.scripts]
 pdf2pdfa = "pdf2pdfa.cli:cli"
 
+[project.urls]
+Homepage = "https://github.com/nks1990/pdf2pdfa"
+Repository = "https://github.com/nks1990/pdf2pdfa"
+Issues = "https://github.com/nks1990/pdf2pdfa/issues"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pdf2pdfa*"]
 
 [tool.setuptools.package-data]
-pdf2pdfa = ["data/sRGB.icc.b64"]
+pdf2pdfa = ["data/*.b64"]

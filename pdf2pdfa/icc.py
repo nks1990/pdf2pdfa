@@ -6,14 +6,12 @@ import base64
 import logging
 from pathlib import Path
 
-from typing import Dict
-
-from pikepdf import Pdf, Name, Dictionary, Array, String
+from pikepdf import Pdf, Name, Dictionary, Array, String, Stream
 
 logger = logging.getLogger(__name__)
 
 
-def embed_icc_profile(pdf: Pdf, icc_path: str) -> None:
+def embed_icc_profile(pdf: Pdf, icc_path: str) -> Stream:
     """Add an OutputIntent referencing *icc_path* to the PDF."""
     path = Path(icc_path)
     if not path.is_file():
@@ -41,13 +39,16 @@ def embed_icc_profile(pdf: Pdf, icc_path: str) -> None:
             'Lab ': 3,
         }.get(space, 3)
 
+    icc_stream.stream_dict['/N'] = _num_components(data)
+
     outi = Dictionary({
         '/Type': Name('/OutputIntent'),
         '/S': Name('/GTS_PDFA1'),
+        '/RegistryName': String('http://www.color.org'),
         '/OutputConditionIdentifier': String('sRGB IEC61966-2.1'),
         '/DestOutputProfile': icc_stream,
-        '/N': _num_components(data),
     })
     pdf.Root.OutputIntents = Array([outi])
+    return icc_stream
 
 
