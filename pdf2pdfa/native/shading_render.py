@@ -1,21 +1,23 @@
-"""Renderer mixin for owned axial/radial PDF shadings."""
+"""Renderer mixin for the canonical owned PDF shading dispatcher."""
 
 from __future__ import annotations
 
 from .content import ContentInstruction
 from .objects import PDFDict, PDFStream
 from .page_render import RenderingError, UnsupportedRenderingError, _name, _resolve_resource
-from .shading import ShadingError, UnsupportedShadingError, paint_shading
+from .shading import ShadingError, UnsupportedShadingError
+from .shading_dispatch import paint_owned_shading
 from .structure import resolve
 
 
 class ShadingRendererMixin:
-    """Intercept ``sh`` and paint through the owned shading evaluator.
+    """Intercept ``sh`` and paint through the canonical owned shading engine.
 
     The mixin is intentionally orthogonal to transparency. When combined with
     ``TransparencyRenderer`` it consumes that renderer's current ``soft_mask``
-    and ordinary graphics-state alpha/blend mode, so shadings participate in
-    the same owned compositing semantics as paths, text and images.
+    and ordinary graphics-state alpha/blend mode, so every supported shading
+    type participates in the same owned compositing semantics as paths, text
+    and images.
     """
 
     def _instruction(self, instruction: ContentInstruction) -> None:
@@ -38,7 +40,7 @@ class ShadingRendererMixin:
         surface, state, _ = self._require()  # type: ignore[attr-defined]
         soft_mask = getattr(self, "soft_mask", None)
         try:
-            paint_shading(
+            paint_owned_shading(
                 self.doc,  # type: ignore[attr-defined]
                 shading,
                 resources=self.resources,  # type: ignore[attr-defined]
