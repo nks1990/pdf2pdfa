@@ -24,6 +24,9 @@ an end-to-end regression.
 - PatternType 2 shading fills routed through the same canonical shading dispatcher;
 - PatternType 1 / PaintType 1 colored tiling fills;
 - PatternType 1 / PaintType 2 uncolored tiling fills through an owned shape-mask renderer for paths, text, strokes and ImageMask, with base color supplied by `[/Pattern base] ... scn`;
+- normal annotation `/AP /N` rendering with BBox/Matrix-to-Rect mapping, state selection and page rotation;
+- annotation-aware visual fidelity;
+- PDF/A-1 annotation appearance transparency repair by baking the current normal appearance into the static page raster and neutralizing AP painting streams while retaining annotation dictionary/Rect/Subtype/AS semantics;
 - owned PDF/A-1 page transparency flattening and visual fidelity.
 
 ## Explicit fail-closed renderer gaps
@@ -38,7 +41,8 @@ an end-to-end regression.
 - JPX/JPEG 2000 and JBIG2 image codecs;
 - knockout transparency groups;
 - transparency groups with an explicit non-RGB blending color space;
-- annotation appearance transparency flattening;
+- annotation NoZoom/NoRotate/ToggleNoView display transforms;
+- dynamic annotation appearance interaction after PDF/A-1 static appearance baking (R/D streams are neutralized);
 - Type3 stroke/clip text render modes and nested text where not already supported.
 
 The production rule is fail-closed: a conversion that requires one of these

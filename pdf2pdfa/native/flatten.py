@@ -1,13 +1,15 @@
 """Owned PDF/A-1 transparency flattening.
 
-The flattener intentionally rasterizes only pages whose *used* painting
-instructions require transparency. It renders through the highest-capability
-owned renderer, embeds an opaque RGB image and replaces only that page's
-painting content. Page boxes, annotations and /Rotate are preserved.
+The flattener intentionally rasterizes only pages whose *used* page-content
+painting instructions require transparency. It renders through the
+highest-capability owned renderer with annotation painting explicitly disabled,
+embeds an opaque RGB image and replaces only that page's painting content.
+Page boxes, annotations and /Rotate are preserved.
 
-Annotation appearance streams are deliberately not flattened here. A page is
-rejected if an annotation appearance depends on inherited page resources,
-because replacing those resources could silently alter the annotation.
+Annotation appearance transparency is handled by its own repair path. Keeping
+annotation painting disabled here prevents ordinary page-content flattening
+from baking an annotation into the page while also preserving its /AP and thus
+drawing it twice.
 """
 
 from __future__ import annotations
@@ -173,13 +175,7 @@ def flatten_pages(
     *,
     dpi: int = 144,
 ) -> FlattenReport:
-    """Flatten selected one-based pages to opaque RGB using only owned code.
-
-    The page is rendered with ``rotate=0`` so the embedded raster represents the
-    original page user space. The existing page-tree /Rotate value is left
-    untouched, preventing a second rotation when the flattened candidate is
-    displayed.
-    """
+    """Flatten selected one-based page-content paintings to opaque owned RGB."""
     if dpi <= 0 or dpi > 2400:
         raise ValueError("dpi must be between 1 and 2400")
 
@@ -200,7 +196,11 @@ def flatten_pages(
         page = pages[page_number - 1]
         _guard_annotation_resource_independence(doc, page)
         try:
-            rendered = FullOwnedPageRenderer(doc, dpi=dpi).render_page(_unrotated(page))
+            rendered = FullOwnedPageRenderer(
+                doc,
+                dpi=dpi,
+                render_annotations=False,
+            ).render_page(_unrotated(page))
         except (UnsupportedRenderingError, RenderingError, ValueError) as exc:
             raise TransparencyFlattenError(
                 f"page {page_number} cannot be flattened by the owned renderer: {exc}"
@@ -223,8 +223,6 @@ def flatten_pages(
         )
         page.dictionary["Contents"] = content_ref
 
-        # The replacement painting content is one opaque image. Any page-level
-        # transparency group is therefore obsolete, whether direct or indirect.
         try:
             group = resolve(doc, page.dictionary.get("Group"))
         except Exception:
