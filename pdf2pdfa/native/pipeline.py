@@ -20,7 +20,12 @@ from .font_embed import FontEmbeddingReport, FontProgramMap, embed_missing_fonts
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .pdfa import NativePDFAValidator, ValidationReport, policy
 from .repair import RepairPlan, UnsupportedNativeRepairError
-from .repair_owned import OwnedRepairEngine, flatten_page_numbers
+from .repair_owned import (
+    OwnedRepairEngine,
+    flatten_annotation_page_numbers,
+    flatten_page_numbers,
+    has_visual_rewrite,
+)
 from .security import InvalidPasswordError, SecurePDFDocument
 from .structure import resolve, walk_reachable_objects
 from .document import PDFDocument
@@ -130,8 +135,8 @@ class OwnedPDFAPipeline:
 
     Validation is mandatory. ``fidelity='auto'`` uses semantic invariants for
     structural repairs and automatically upgrades to native visual comparison
-    when a repair intentionally changes page painting, such as PDF/A-1
-    transparency flattening.
+    when a repair intentionally changes static painting, including page or
+    annotation appearance flattening.
     """
 
     def __init__(
@@ -225,7 +230,7 @@ class OwnedPDFAPipeline:
     def _effective_fidelity(self, plan: RepairPlan) -> str:
         if self.fidelity_mode != "auto":
             return self.fidelity_mode
-        return "visual" if flatten_page_numbers(plan) else "semantic"
+        return "visual" if has_visual_rewrite(plan) else "semantic"
 
     def _fidelity_check(
         self,
@@ -239,10 +244,15 @@ class OwnedPDFAPipeline:
         if mode == "off":
             return None
         if mode == "semantic":
-            if flatten_page_numbers(plan):
+            if has_visual_rewrite(plan):
+                pages = sorted(
+                    set(flatten_page_numbers(plan))
+                    | set(flatten_annotation_page_numbers(plan))
+                )
                 raise OwnedFidelityError(
-                    "semantic fidelity cannot approve an intentional page-painting rewrite; "
-                    "use fidelity='visual' or 'auto' for transparency flattening"
+                    "semantic fidelity cannot approve an intentional painting rewrite on page(s) "
+                    + ", ".join(str(page) for page in pages)
+                    + "; use fidelity='visual' or 'auto'"
                 )
             report = self.semantic_fidelity.compare(
                 semantic_baseline,
@@ -283,8 +293,6 @@ class OwnedPDFAPipeline:
         destination = Path(destination).expanduser().resolve()
         destination.parent.mkdir(parents=True, exist_ok=True)
 
-        # Already-conforming unencrypted input is the strongest fidelity case:
-        # byte-for-byte passthrough. Validation is still performed by us first.
         raw_probe = PDFDocument.open(data, repair=True)
         encrypted_source = "Encrypt" in raw_probe.trailer
         if not encrypted_source:
@@ -327,8 +335,6 @@ class OwnedPDFAPipeline:
                 "Set allow_signature_invalidation=True only when invalidation is intentional."
             )
 
-        # Semantic comparison can use the plaintext document before font
-        # embedding because content/image semantics are unchanged by embedding.
         semantic_baseline = self._serialize_working_document(doc, target.level)
         font_report = self._preprocess_fonts(
             doc,
@@ -375,9 +381,6 @@ class OwnedPDFAPipeline:
             fidelity_report = self._fidelity_check(
                 mode=effective_fidelity,
                 semantic_baseline=semantic_baseline,
-                # Visual baseline is after any explicit user-supplied font
-                # embedding, because an unembedded/missing font has no fully
-                # self-contained visual meaning to compare without substitution.
                 visual_baseline=working_bytes,
                 candidate=candidate,
                 plan=plan,
