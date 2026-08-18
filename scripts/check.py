@@ -26,7 +26,7 @@ def main() -> int:
     parser.add_argument(
         "--full",
         action="store_true",
-        help="also run Ghostscript + veraPDF end-to-end smoke tests",
+        help="also run owned end-to-end 1b/2b/3b conversion/validation/fidelity smoke tests",
     )
     args = parser.parse_args()
 

@@ -1,7 +1,7 @@
-"""Run the CLI with ``python -m pdf2pdfa``."""
+"""Run the owned CLI with ``python -m pdf2pdfa``."""
 
-from .cli import cli
+from .cli import main
 
 
 if __name__ == "__main__":
-    cli()
+    raise SystemExit(main())
