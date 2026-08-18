@@ -1,25 +1,18 @@
 """CCITTFaxDecode adapter for owned PDF Image XObjects.
 
-The bit-level fax codec in :mod:`ccitt` is kept independent of PDF object
-syntax. This adapter applies PDF DecodeParms, accepts optional EOL markers even
-when EndOfLine is false, uses the Image XObject height when Rows is zero, and
-normalizes the fax photometric convention back to ordinary PDF one-bit image
-samples before handing the stream to the regular image/color/mask pipeline.
+The bit-level CCITT primitives live in :mod:`ccitt`; PDF/T.4/T.6 line framing
+lives in :mod:`fax`.  This adapter is intentionally small: parse DecodeParms,
+resolve Image Height/Width semantics, decode through one canonical fax path and
+materialize ordinary packed bilevel samples for the normal image pipeline.
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 
-from .ccitt import (
-    CCITTError,
-    UnsupportedCCITTError,
-    _BitReader,
-    _decode_1d_row,
-    _decode_2d_row,
-    _pack,
-)
+from .ccitt import CCITTError, UnsupportedCCITTError
 from .document import PDFDocument
+from .fax import decode_fax
 from .filters import TERMINAL_IMAGE_FILTERS, decode_pipeline
 from .image import (
     DecodedImage,
@@ -56,79 +49,6 @@ def _boolean(doc: PDFDocument, value: PDFObject | None, default: bool, label: st
     return value
 
 
-def _consume_optional_eol(reader: _BitReader, *, required: bool) -> bool:
-    start = reader.position
-    zeros = 0
-    try:
-        while zeros <= 64:
-            bit = reader.read_bit()
-            if bit:
-                if zeros >= 11:
-                    return True
-                reader.position = start
-                if required:
-                    raise CCITTError("required CCITT EOL marker is absent")
-                return False
-            zeros += 1
-    except CCITTError:
-        reader.position = start
-        if required:
-            raise
-        return False
-    reader.position = start
-    if required:
-        raise CCITTError("required CCITT EOL marker is absent")
-    return False
-
-
-def _decode_pdf_fax(
-    data: bytes,
-    *,
-    columns: int,
-    rows: int,
-    k: int,
-    end_of_line: bool,
-    encoded_byte_align: bool,
-    damaged_rows_before_error: int,
-) -> bytes:
-    """Decode fax runs to normalized PDF image samples (1=white, 0=black)."""
-    if columns <= 0 or rows <= 0 or columns * rows > 250_000_000:
-        raise CCITTError(f"invalid/unsafe CCITT dimensions {columns}x{rows}")
-    if k > 0:
-        raise UnsupportedCCITTError(
-            "mixed Group 3 CCITT (K > 0) is not implemented by the owned decoder"
-        )
-    if damaged_rows_before_error:
-        raise UnsupportedCCITTError(
-            "DamagedRowsBeforeError recovery is not implemented by the owned decoder"
-        )
-
-    reader = _BitReader(data)
-    decoded: list[list[bool]] = []
-    reference = [False] * columns
-    for row_number in range(rows):
-        # EncodedByteAlign means the first significant code of each encoded line
-        # starts on a byte boundary. EOL markers are accepted whether optional
-        # or required; EndOfLine only changes whether their absence is an error.
-        if encoded_byte_align:
-            reader.align_byte()
-        _consume_optional_eol(reader, required=end_of_line)
-        try:
-            if k == 0:
-                row = _decode_1d_row(reader, columns)
-            else:
-                row = _decode_2d_row(reader, reference, columns)
-        except CCITTError as exc:
-            raise CCITTError(f"CCITT row {row_number + 1}: {exc}") from exc
-        decoded.append(row)
-        reference = row
-
-    # Materialized bytes no longer carry /CCITTFaxDecode or DecodeParms. They
-    # therefore must use ordinary PDF DeviceGray sample polarity, regardless of
-    # the source filter's BlackIs1 flag: 1=white and 0=black.
-    return _pack(decoded, False)
-
-
 def _ccitt_payload(
     doc: PDFDocument,
     stream: PDFStream,
@@ -147,10 +67,7 @@ def _ccitt_payload(
         raise UnsupportedImageError(
             "CCITTFaxDecode shall be the final fax stage in the owned image pipeline"
         )
-    if any(
-        name in TERMINAL_IMAGE_FILTERS
-        for name in filters[: positions[0]]
-    ):
+    if any(name in TERMINAL_IMAGE_FILTERS for name in filters[: positions[0]]):
         raise UnsupportedImageError(
             "another terminal image codec precedes CCITTFaxDecode"
         )
@@ -168,10 +85,8 @@ def _ccitt_payload(
     encoded_byte_align = _boolean(
         doc, params.get("EncodedByteAlign"), False, "/EncodedByteAlign"
     )
-    # Parse BlackIs1 strictly even though run colors are normalized below. The
-    # value describes the source filter's decoded bit polarity, not the color of
-    # the fax run itself; after removing the filter we canonicalize to 1=white.
-    _boolean(doc, params.get("BlackIs1"), False, "/BlackIs1")
+    end_of_block = _boolean(doc, params.get("EndOfBlock"), True, "/EndOfBlock")
+    black_is_1 = _boolean(doc, params.get("BlackIs1"), False, "/BlackIs1")
     damaged = _exact_integer(
         doc,
         params.get("DamagedRowsBeforeError"),
@@ -189,14 +104,17 @@ def _ccitt_payload(
         raise UnsupportedImageError(
             f"CCITT /Rows {rows} disagrees with Image /Height {height}"
         )
+
     try:
-        return _decode_pdf_fax(
+        return decode_fax(
             encoded,
             columns=columns,
             rows=rows,
             k=k,
             end_of_line=end_of_line,
             encoded_byte_align=encoded_byte_align,
+            end_of_block=end_of_block,
+            black_is_1=black_is_1,
             damaged_rows_before_error=damaged,
         )
     except UnsupportedCCITTError as exc:
