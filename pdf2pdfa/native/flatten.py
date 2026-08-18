@@ -1,9 +1,9 @@
 """Owned PDF/A-1 transparency flattening.
 
 The flattener intentionally rasterizes only pages whose *used* painting
-instructions require transparency. It renders through the owned transparency
-renderer, embeds an opaque RGB image and replaces only that page's painting
-content. Page boxes, annotations and /Rotate are preserved.
+instructions require transparency. It renders through the highest-capability
+owned renderer, embeds an opaque RGB image and replaces only that page's
+painting content. Page boxes, annotations and /Rotate are preserved.
 
 Annotation appearance streams are deliberately not flattened here. A page is
 rejected if an annotation appearance depends on inherited page resources,
@@ -19,9 +19,9 @@ from typing import Iterable
 from .document import PDFDocument
 from .filters import flate_encode
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
+from .owned_renderer import FullOwnedPageRenderer
 from .page_render import RenderingError, UnsupportedRenderingError
 from .structure import PageView, resolve, walk_pages
-from .transparency_render import TransparencyRenderer
 
 
 class TransparencyFlattenError(RuntimeError):
@@ -200,7 +200,7 @@ def flatten_pages(
         page = pages[page_number - 1]
         _guard_annotation_resource_independence(doc, page)
         try:
-            rendered = TransparencyRenderer(doc, dpi=dpi).render_page(_unrotated(page))
+            rendered = FullOwnedPageRenderer(doc, dpi=dpi).render_page(_unrotated(page))
         except (UnsupportedRenderingError, RenderingError, ValueError) as exc:
             raise TransparencyFlattenError(
                 f"page {page_number} cannot be flattened by the owned renderer: {exc}"

@@ -1,9 +1,8 @@
 """Highest-capability owned page renderer composition.
 
-This is the renderer used by fidelity/flattening.  It layers Type 3 CharProc
-execution from :class:`OwnedPageRenderer` with transparency state from
-:class:`TransparencyRenderer`, ensuring a glyph cannot leak a soft mask into
-subsequent page painting even when its CharProc changes ExtGState.
+This is the renderer used by fidelity/flattening. It composes Type 3 CharProc
+execution, transparency/soft-mask state and axial/radial shading painting in a
+single fail-closed interpreter.
 """
 
 from __future__ import annotations
@@ -12,11 +11,12 @@ from pathlib import Path as FSPath
 
 from .document import PDFDocument
 from .page_render import RenderedPage
+from .shading_render import ShadingRendererMixin
 from .transparency_render import TransparencyRenderer
 from .structure import walk_pages
 
 
-class FullOwnedPageRenderer(TransparencyRenderer):
+class FullOwnedPageRenderer(ShadingRendererMixin, TransparencyRenderer):
     def _paint_type3_glyph(self, *args, **kwargs) -> None:
         saved_soft = bytearray(self.soft_mask) if self.soft_mask is not None else None
         saved_soft_stack = [
