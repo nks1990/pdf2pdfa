@@ -1,11 +1,11 @@
 """High-level PDF CCITT/T.4/T.6 row decoder.
 
-``ccitt.py`` owns the Huffman/run and 2D primitives.  This module owns the PDF
+``ccitt.py`` owns the Huffman/run and 2D primitives. This module owns the PDF
 line framing semantics around those primitives: optional/required EOL, byte
 alignment, Modified READ tag bits, K cadence and Image-Height row limits.
 
 The returned packed samples are canonical ordinary PDF bilevel samples:
-``1 = white`` and ``0 = black``.  ``BlackIs1`` belongs to the source fax
+``1 = white`` and ``0 = black``. ``BlackIs1`` belongs to the source fax
 filter convention and is normalized away before the filter is materialized.
 """
 
@@ -51,18 +51,17 @@ class FaxParameters:
 
 
 def _align_zero_fill(reader: _BitReader) -> None:
-    """Advance to a byte boundary, requiring all skipped fill bits to be zero."""
+    """Advance to a byte boundary, requiring every skipped fill bit to be zero."""
     remainder = reader.position % 8
     if not remainder:
         return
-    count = 8 - remainder
-    for _ in range(count):
+    for _ in range(8 - remainder):
         if reader.read_bit() != 0:
             raise CCITTError("non-zero CCITT fill bit before byte boundary")
 
 
 def _consume_optional_eol(reader: _BitReader, *, required: bool) -> bool:
-    """Consume T.4 EOL plus any leading zero fill, or restore the bit position."""
+    """Consume T.4 EOL plus leading zero fill, or restore the bit position."""
     start = reader.position
     zeros = 0
     try:
@@ -87,23 +86,24 @@ def _consume_optional_eol(reader: _BitReader, *, required: bool) -> bool:
     return False
 
 
-def _decode_mr_tagged_row(
+def _decode_mr_row(
     reader: _BitReader,
     *,
+    tag: int,
     reference: list[bool],
     columns: int,
     row_number: int,
     k: int,
     two_d_since_reference: int,
 ) -> tuple[list[bool], int]:
-    """Decode one Modified READ line after its EOL, starting at the tag bit."""
-    tag = reader.read_bit()
+    """Decode one Modified READ row after its already-consumed tag bit."""
+    if tag not in (0, 1):
+        raise CCITTError(f"invalid mixed Group 3 tag bit {tag}")
     if row_number == 1 and tag != 1:
         raise CCITTError("first mixed Group 3 row shall be one-dimensional")
 
     if tag == 1:
-        row = _decode_1d_row(reader, columns)
-        return row, 0
+        return _decode_1d_row(reader, columns), 0
 
     # A positive K describes the maximum cycle: one one-dimensional reference
     # line followed by at most K-1 two-dimensional lines.
@@ -111,8 +111,41 @@ def _decode_mr_tagged_row(
         raise CCITTError(
             f"mixed Group 3 exceeds K={k}: expected a one-dimensional reference row"
         )
-    row = _decode_2d_row(reader, reference, columns)
-    return row, two_d_since_reference + 1
+    return (
+        _decode_2d_row(reader, reference, columns),
+        two_d_since_reference + 1,
+    )
+
+
+def _start_row(
+    reader: _BitReader,
+    *,
+    k: int,
+    end_of_line: bool,
+    encoded_byte_align: bool,
+) -> tuple[bool, int | None]:
+    """Consume row framing and return ``(eol_seen, mixed_tag)``.
+
+    EOL is looked for *before* byte alignment because T.4 fill bits can be
+    chosen so that the EOL (or EOL+MR tag) ends on a byte boundary. Aligning
+    blindly first can therefore skip into the EOL itself. When EOL is absent,
+    ``EncodedByteAlign`` instead validates/skips zero padding before the row.
+    """
+    eol_seen = _consume_optional_eol(reader, required=end_of_line)
+
+    if eol_seen:
+        tag = reader.read_bit() if k > 0 else None
+        if encoded_byte_align and reader.position % 8:
+            suffix = "EOL+tag" if k > 0 else "EOL"
+            raise CCITTError(
+                f"CCITT {suffix} does not terminate on a byte boundary while EncodedByteAlign=true"
+            )
+        return True, tag
+
+    if encoded_byte_align:
+        _align_zero_fill(reader)
+    tag = reader.read_bit() if k > 0 else None
+    return False, tag
 
 
 def decode_fax(
@@ -131,7 +164,7 @@ def decode_fax(
 
     ``black_is_1`` is parsed and retained in the parameter model for exact PDF
     semantics, but the materialized output is deliberately normalized to the
-    ordinary PDF image convention (1 white / 0 black).  The caller may then
+    ordinary PDF image convention (1 white / 0 black). The caller may then
     remove ``/CCITTFaxDecode`` without needing an out-of-band polarity flag.
     """
     params = FaxParameters(
@@ -152,24 +185,24 @@ def decode_fax(
 
     for row_index in range(params.rows):
         row_number = row_index + 1
-
-        # Fill is zeros between the preceding line data and the EOL sequence.
-        # Skipping to a byte boundary first is safe because optional-EOL search
-        # accepts the remaining zero fill plus the 12-bit EOL.  It also catches
-        # non-zero padding instead of silently discarding it.
-        if params.encoded_byte_align:
-            _align_zero_fill(reader)
-
-        eol_seen = _consume_optional_eol(reader, required=params.end_of_line)
-
         try:
+            _eol_seen, tag = _start_row(
+                reader,
+                k=params.k,
+                end_of_line=params.end_of_line,
+                encoded_byte_align=params.encoded_byte_align,
+            )
+
             if params.k < 0:
                 row = _decode_2d_row(reader, reference, params.columns)
             elif params.k == 0:
                 row = _decode_1d_row(reader, params.columns)
             else:
-                row, two_d_since_reference = _decode_mr_tagged_row(
+                if tag is None:
+                    raise CCITTError("mixed Group 3 row is missing its 1D/2D tag bit")
+                row, two_d_since_reference = _decode_mr_row(
                     reader,
+                    tag=tag,
                     reference=reference,
                     columns=params.columns,
                     row_number=row_number,
@@ -182,17 +215,7 @@ def decode_fax(
         decoded.append(row)
         reference = row
 
-        # With byte-aligned T.4 and an EOL/tag prefix, the first data bit after
-        # the prefix should land on a byte boundary.  We accept producer streams
-        # that omit EOL when EndOfLine is false, but when an EOL is present we
-        # require the declared byte-alignment contract to be true on the wire.
-        if params.encoded_byte_align and eol_seen:
-            # We cannot check this after row data has been consumed; the next
-            # iteration validates its fill bits.  The comment documents why no
-            # blind bit skipping occurs here.
-            pass
-
-    # EndOfBlock/RTC/EOFB is trailing framing.  The PDF Image /Height-derived
+    # EndOfBlock/RTC/EOFB is trailing framing. The PDF Image /Height-derived
     # row count is authoritative for the pixels we need, so trailing framing is
     # neither required nor consumed here.
     return _pack(decoded, False)
