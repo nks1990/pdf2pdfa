@@ -5,23 +5,65 @@ on:
     tags:
       - "v*.*.*"
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
-  build-and-publish:
+  build:
+    name: Test and build distributions
     runs-on: ubuntu-latest
-    environment: pypi
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: python -m pip install --upgrade build
+          python-version: "3.11"
+          cache: pip
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import tomllib
+
+          data = tomllib.loads(pathlib.Path("pyproject.toml").read_text())
+          version = data["project"]["version"]
+          expected = f"v{version}"
+          actual = os.environ["RELEASE_TAG"]
+          if actual != expected:
+              raise SystemExit(f"Refusing release: tag {actual!r} != {expected!r}")
+          print(f"release version verified: {version}")
+          PY
+      - run: python -m pip install --upgrade pip build twine
+      - run: pip install -e ".[test]"
+      - run: python -m compileall -q pdf2pdfa tests
+      - run: pytest -q
       - run: python -m build
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - run: python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
         with:
-          skip-existing: true
+          name: python-package-distributions
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish distributions
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pdf2pdfa
+    permissions:
+      id-token: write
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Publish to PyPI with Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@v1.14.2
