@@ -176,7 +176,7 @@ def analyze_pdf(
         signed = False
         if acroform and acroform.get("/Fields"):
             for field in _iter_fields(acroform.get("/Fields")):
-                if _name(field.get("/FT")) == "/Sig":
+                if _name(field.get("/FT")) == "/Sig" and field.get("/V") is not None:
                     signed = True
                     break
 
