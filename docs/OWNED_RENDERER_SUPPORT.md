@@ -17,6 +17,7 @@ an end-to-end regression.
 - image masks and soft masks;
 - device/calibrated/ICC/Indexed/Separation/DeviceN color paths already supported by the color engine;
 - blend modes and isolated transparency groups;
+- function-based ShadingType 1 surfaces with two-input owned PDF Functions;
 - axial/radial ShadingType 2/3;
 - Gouraud mesh ShadingType 4/5, including filtered mesh streams;
 - PatternType 2 shading fills routed through the same canonical shading dispatcher;
@@ -25,7 +26,6 @@ an end-to-end regression.
 
 ## Explicit fail-closed renderer gaps
 
-- ShadingType 1 function-based surfaces;
 - ShadingType 6/7 Coons/tensor patch meshes;
 - PatternType 1 / PaintType 2 uncolored tiling;
 - pattern-colored strokes;
