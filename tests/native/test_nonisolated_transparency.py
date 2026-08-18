@@ -140,14 +140,14 @@ def test_nested_nonisolated_group_handles_translucent_backdrop_alpha():
         {"HalfBlue": PDFDict({"Type": PDFName("ExtGState"), "ca": 0.5})}
     )
     outer = _form(
-        b"/HalfBlue gs 0 0 1 rg 0 0 100 100 re f /Inner Do\n",
+        b"q /HalfBlue gs 0 0 1 rg 0 0 100 100 re f Q /Inner Do\n",
         resources=inner_resources,
         isolated=True,
     )
     page = render_page_full(_pdf(outer), dpi=72)
     pixel = _pixel(page)
-    # Derived from source-over on a 0.5-alpha blue backdrop, then the isolated
-    # outer group is composed over the page's white background.
+    # The inner group sees a 0.5-alpha blue backdrop but has boundary alpha 1.
+    # The resulting isolated outer group then composites over the white page.
     assert 0.45 < pixel.r < 0.55
     assert 0.20 < pixel.g < 0.30
     assert 0.45 < pixel.b < 0.55
