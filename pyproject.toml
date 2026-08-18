@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf2pdfa"
-version = "4.0.0"
-description = "Profile-aware PDF to PDF/A conversion with preflight, adaptive backends, validation and fidelity checks"
+version = "5.0.0"
+description = "Dependency-free PDF to PDF/A conversion, validation and fidelity using a repository-owned engine"
 authors = [{name = "nks1990", email = "nks1990@users.noreply.github.com"}]
 license = "MIT"
-license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.10"
-keywords = ["pdf", "pdfa", "archiving", "digital-preservation", "veraPDF", "ghostscript"]
+keywords = ["pdf", "pdfa", "archiving", "digital-preservation", "pdf-parser", "pdf-validator"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -23,37 +23,25 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Graphics :: Graphics Conversion",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
-dependencies = [
-    "click>=8.1",
-    "fonttools>=4.45",
-    "pikepdf>=8.15",
-]
+dependencies = []
 
 [project.optional-dependencies]
-fidelity = [
-    "Pillow>=10.0",
-]
 test = [
-    "lxml>=5.0",
-    "Pillow>=10.0",
     "pytest>=8.0",
-    "tomli>=2.0; python_version < '3.11'",
 ]
 dev = [
     "build>=1.2",
-    "lxml>=5.0",
-    "Pillow>=10.0",
     "pytest>=8.0",
-    "tomli>=2.0; python_version < '3.11'",
     "twine>=5.0",
 ]
 
 [project.scripts]
-pdf2pdfa = "pdf2pdfa.cli:cli"
+pdf2pdfa = "pdf2pdfa.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/nks1990/pdf2pdfa"
@@ -66,8 +54,8 @@ where = ["."]
 include = ["pdf2pdfa*"]
 
 [tool.setuptools.package-data]
-pdf2pdfa = ["data/*.b64", "py.typed"]
+pdf2pdfa = ["py.typed"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests/native", "tests/owned"]
 addopts = "-ra"
