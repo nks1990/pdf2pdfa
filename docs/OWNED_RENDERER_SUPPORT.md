@@ -22,13 +22,14 @@ an end-to-end regression.
 - Gouraud mesh ShadingType 4/5, including filtered mesh streams;
 - PatternType 2 shading fills routed through the same canonical shading dispatcher;
 - PatternType 1 / PaintType 1 colored tiling fills;
+- PatternType 1 / PaintType 2 uncolored tiling fills through an owned shape-mask renderer for paths, text, strokes and ImageMask, with base color supplied by `[/Pattern base] ... scn`;
 - owned PDF/A-1 page transparency flattening and visual fidelity.
 
 ## Explicit fail-closed renderer gaps
 
 - ShadingType 6/7 Coons/tensor patch meshes;
-- PatternType 1 / PaintType 2 uncolored tiling;
 - pattern-colored strokes;
+- PaintType 2 cell soft masks/transparency groups and intrinsic-color content;
 - CFF CID per-FD FontMatrix composition;
 - Type0 vertical metrics/text;
 - Type1 PFA/PFB outline rendering;
