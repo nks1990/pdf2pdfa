@@ -3,8 +3,8 @@
 The bit-level fax codec in :mod:`ccitt` is kept independent of PDF object
 syntax. This adapter applies PDF DecodeParms, accepts optional EOL markers even
 when EndOfLine is false, uses the Image XObject height when Rows is zero, and
-then feeds packed one-bit samples back through the normal owned image/color/
-mask pipeline.
+normalizes the fax photometric convention back to ordinary PDF one-bit image
+samples before handing the stream to the regular image/color/mask pipeline.
 """
 
 from __future__ import annotations
@@ -27,11 +27,10 @@ from .image import (
     UnsupportedImageError,
     _filter_pipeline,
     _integer,
-    _name,
     _stream,
     decode_image,
 )
-from .objects import PDFDict, PDFName, PDFObject, PDFStream
+from .objects import PDFDict, PDFObject, PDFStream
 from .raster import Color
 from .structure import resolve
 
@@ -90,9 +89,9 @@ def _decode_pdf_fax(
     k: int,
     end_of_line: bool,
     encoded_byte_align: bool,
-    black_is_1: bool,
     damaged_rows_before_error: int,
 ) -> bytes:
+    """Decode fax runs to normalized PDF image samples (1=white, 0=black)."""
     if columns <= 0 or rows <= 0 or columns * rows > 250_000_000:
         raise CCITTError(f"invalid/unsafe CCITT dimensions {columns}x{rows}")
     if k > 0:
@@ -108,8 +107,9 @@ def _decode_pdf_fax(
     decoded: list[list[bool]] = []
     reference = [False] * columns
     for row_number in range(rows):
-        # EncodedByteAlign means extra zero bits may precede each encoded line
-        # so its first significant code begins at a byte boundary.
+        # EncodedByteAlign means the first significant code of each encoded line
+        # starts on a byte boundary. EOL markers are accepted whether optional
+        # or required; EndOfLine only changes whether their absence is an error.
         if encoded_byte_align:
             reader.align_byte()
         _consume_optional_eol(reader, required=end_of_line)
@@ -122,7 +122,11 @@ def _decode_pdf_fax(
             raise CCITTError(f"CCITT row {row_number + 1}: {exc}") from exc
         decoded.append(row)
         reference = row
-    return _pack(decoded, black_is_1)
+
+    # Materialized bytes no longer carry /CCITTFaxDecode or DecodeParms. They
+    # therefore must use ordinary PDF DeviceGray sample polarity, regardless of
+    # the source filter's BlackIs1 flag: 1=white and 0=black.
+    return _pack(decoded, False)
 
 
 def _ccitt_payload(
@@ -164,7 +168,10 @@ def _ccitt_payload(
     encoded_byte_align = _boolean(
         doc, params.get("EncodedByteAlign"), False, "/EncodedByteAlign"
     )
-    black_is_1 = _boolean(doc, params.get("BlackIs1"), False, "/BlackIs1")
+    # Parse BlackIs1 strictly even though run colors are normalized below. The
+    # value describes the source filter's decoded bit polarity, not the color of
+    # the fax run itself; after removing the filter we canonicalize to 1=white.
+    _boolean(doc, params.get("BlackIs1"), False, "/BlackIs1")
     damaged = _exact_integer(
         doc,
         params.get("DamagedRowsBeforeError"),
@@ -190,7 +197,6 @@ def _ccitt_payload(
             k=k,
             end_of_line=end_of_line,
             encoded_byte_align=encoded_byte_align,
-            black_is_1=black_is_1,
             damaged_rows_before_error=damaged,
         )
     except UnsupportedCCITTError as exc:
