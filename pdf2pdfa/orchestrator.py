@@ -67,12 +67,21 @@ def _requires_full_rewrite(report: PreflightReport) -> bool:
         "embedded_files",
         "transparency",
         "digital_signature",
+        "direct_device_color",
+        "content_stream_parse",
     }
     if any(issue.code in repair_codes for issue in report.issues):
         return True
     if int(report.features.get("type0_fonts", 0) or 0) > 0:
         return True
     if int(report.features.get("complex_fonts", 0) or 0) > 0:
+        return True
+
+    # Assigning an arbitrary CMYK source profile is not a color conversion.
+    # The fast path therefore handles explicit RGB resources only; CMYK is
+    # delegated to Ghostscript where a real color-conversion strategy is used.
+    device_spaces = report.features.get("device_color_spaces") or {}
+    if int(device_spaces.get("/DeviceCMYK", 0) or 0) > 0:
         return True
     return False
 
