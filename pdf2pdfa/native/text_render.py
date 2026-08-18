@@ -1,24 +1,37 @@
-"""PDF text-state interpreter and TrueType glyph rasterization."""
+"""PDF text-state interpreter with owned TrueType and Type 3 painting."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Callable
+from typing import Callable, Protocol
 
 from .pdf_font import PDFTextFont, PDFFontError
 from .raster import Color, Matrix, Path, Surface, rasterize_fill
+from .type3_font import Type3FontError, Type3GlyphItem, Type3TextFont
 
 
 class TextRenderError(ValueError):
     pass
 
 
+class _TextFont(Protocol):
+    is_type3: bool
+
+    def decode(self, data: bytes) -> list[object]: ...
+
+
+Type3Painter = Callable[
+    [Type3TextFont, Type3GlyphItem, Matrix, "TextPaintStyle", int],
+    None,
+]
+
+
 @dataclass(slots=True)
 class TextState:
     text_matrix: Matrix = Matrix()
     line_matrix: Matrix = Matrix()
-    font: PDFTextFont | None = None
+    font: PDFTextFont | Type3TextFont | None = None
     font_size: float = 0.0
     char_spacing: float = 0.0
     word_spacing: float = 0.0
@@ -38,7 +51,6 @@ class TextState:
         self.line_matrix = matrix
 
     def move_line(self, tx: float, ty: float) -> None:
-        # Translation is applied in the text-line coordinate system.
         translation = Matrix(1, 0, 0, 1, tx, ty)
         self.line_matrix = self.line_matrix.concat(translation)
         self.text_matrix = self.line_matrix
@@ -59,11 +71,24 @@ class TextPaintStyle:
 
 
 class TrueTypeTextRenderer:
-    """Apply PDF text-show semantics to an owned raster surface."""
+    """Apply PDF text-show semantics to owned TrueType and Type 3 resources.
 
-    def __init__(self, surface: Surface, *, ctm: Matrix) -> None:
+    The historical class name is retained to keep internal imports stable. Type
+    3 glyph painting is delegated back to the page interpreter because a Type 3
+    glyph is itself a PDF content stream and therefore needs the page graphics
+    stack rather than an outline-only rasterizer.
+    """
+
+    def __init__(
+        self,
+        surface: Surface,
+        *,
+        ctm: Matrix,
+        type3_painter: Type3Painter | None = None,
+    ) -> None:
         self.surface = surface
         self.ctm = ctm
+        self.type3_painter = type3_painter
         self.state = TextState()
         self.in_text_object = False
 
@@ -75,7 +100,7 @@ class TrueTypeTextRenderer:
         self._apply_text_clip()
         self.in_text_object = False
 
-    def set_font(self, font: PDFTextFont, size: float) -> None:
+    def set_font(self, font: PDFTextFont | Type3TextFont, size: float) -> None:
         if size == 0:
             raise TextRenderError("text font size cannot be zero")
         self.state.font = font
@@ -120,12 +145,19 @@ class TrueTypeTextRenderer:
     def show(self, data: bytes, style: TextPaintStyle) -> None:
         self._require_text()
         font = self._require_font()
-        for item in font.decode(data):
-            self._paint_glyph(item.glyph_id, style)
+        try:
+            items = font.decode(data)
+        except (PDFFontError, Type3FontError) as exc:
+            raise TextRenderError(str(exc)) from exc
+        for item in items:
+            self._paint_item(item, style)
+            width_1000 = getattr(item, "width_1000", None)
+            if width_1000 is None:
+                raise TextRenderError("font decoder returned glyph without width_1000")
             advance = (
-                item.width_1000 / 1000.0 * self.state.font_size
+                float(width_1000) / 1000.0 * self.state.font_size
                 + self.state.char_spacing
-                + (self.state.word_spacing if item.word_space else 0.0)
+                + (self.state.word_spacing if bool(getattr(item, "word_space", False)) else 0.0)
             ) * self.state.horizontal_scale
             self.state.translate_text(advance)
 
@@ -161,8 +193,10 @@ class TrueTypeTextRenderer:
         self.next_line()
         self.show(data, style)
 
-    def _glyph_transform(self) -> Matrix:
+    def _true_type_transform(self) -> Matrix:
         font = self._require_font()
+        if not isinstance(font, PDFTextFont):
+            raise TextRenderError("TrueType transform requested for non-TrueType font")
         units = font.sfnt.units_per_em
         text_scale = Matrix(
             self.state.font_size * self.state.horizontal_scale / units,
@@ -174,9 +208,59 @@ class TrueTypeTextRenderer:
         )
         return self.ctm.concat(self.state.text_matrix).concat(text_scale)
 
-    def _paint_glyph(self, glyph_id: int, style: TextPaintStyle) -> None:
+    def _type3_transform(self, font: Type3TextFont) -> Matrix:
+        # FontMatrix maps Type 3 character space into text space. Font size,
+        # horizontal scale and rise are then part of the text rendering matrix.
+        text_scale = Matrix(
+            self.state.font_size * self.state.horizontal_scale,
+            0,
+            0,
+            self.state.font_size,
+            0,
+            self.state.rise,
+        )
+        return (
+            self.ctm
+            .concat(self.state.text_matrix)
+            .concat(text_scale)
+            .concat(font.font_matrix)
+        )
+
+    def _paint_item(self, item: object, style: TextPaintStyle) -> None:
         font = self._require_font()
-        transform = self._glyph_transform()
+        if isinstance(font, Type3TextFont):
+            mode = self.state.render_mode
+            if mode == 3:
+                # Invisible text advances normally but paints nothing.
+                return
+            if mode != 0:
+                raise TextRenderError(
+                    "Type3 text rendering modes other than fill(0) and invisible(3) "
+                    "require dedicated owned stroke/clip semantics"
+                )
+            if not isinstance(item, Type3GlyphItem):
+                raise TextRenderError("Type3 decoder returned an invalid glyph item")
+            if self.type3_painter is None:
+                raise TextRenderError("Type3 glyph requires page-interpreter callback")
+            self.type3_painter(
+                font,
+                item,
+                self._type3_transform(font),
+                style,
+                mode,
+            )
+            return
+
+        glyph_id = getattr(item, "glyph_id", None)
+        if not isinstance(glyph_id, int):
+            raise TextRenderError("TrueType decoder returned glyph without glyph_id")
+        self._paint_true_type_glyph(glyph_id, style)
+
+    def _paint_true_type_glyph(self, glyph_id: int, style: TextPaintStyle) -> None:
+        font = self._require_font()
+        if not isinstance(font, PDFTextFont):
+            raise TextRenderError("TrueType glyph requested for non-TrueType font")
+        transform = self._true_type_transform()
         glyph_path = font.outlines.path(glyph_id, transform)
         mode = self.state.render_mode
         fill = mode in (0, 2, 4, 6)
@@ -225,7 +309,7 @@ class TrueTypeTextRenderer:
         if not self.in_text_object:
             raise TextRenderError("text operator used outside BT/ET")
 
-    def _require_font(self) -> PDFTextFont:
+    def _require_font(self) -> PDFTextFont | Type3TextFont:
         if self.state.font is None:
             raise TextRenderError("text-show operator used before Tf selected a font")
         return self.state.font
