@@ -15,11 +15,8 @@ and interpolation rules are implemented.
 from __future__ import annotations
 
 from .document import PDFDocument
-from .mesh_shading import (
-    MeshShadingError,
-    UnsupportedMeshShadingError,
-    paint_mesh_shading,
-)
+from .mesh_shading import MeshShadingError, UnsupportedMeshShadingError
+from .mesh_shading45 import paint_mesh_shading45
 from .objects import PDFDict, PDFObject, PDFStream
 from .raster import Matrix, Surface
 from .shading import ShadingError, UnsupportedShadingError, paint_shading
@@ -43,12 +40,7 @@ def _shading_type(doc: PDFDocument, value: PDFObject) -> int:
 
 
 def _decoded_mesh_stream(doc: PDFDocument, value: PDFObject, shading_type: int) -> PDFStream:
-    """Materialize general PDF stream filters before the mesh bit parser.
-
-    Mesh shading data is itself a PDF stream and may legally be Flate/LZW/etc.
-    ``mesh_shading`` deliberately owns only the post-filter bit grammar, while
-    this dispatcher owns the generalized stream-filter boundary.
-    """
+    """Materialize general PDF stream filters before the mesh bit parser."""
     resolved, _ = _resolved_dictionary(doc, value)
     if not isinstance(resolved, PDFStream):
         raise ShadingError(f"ShadingType {shading_type} mesh shading shall be a stream")
@@ -99,7 +91,7 @@ def paint_owned_shading(
     if shading_type in (4, 5):
         mesh_value = _decoded_mesh_stream(doc, shading_value, shading_type)
         try:
-            paint_mesh_shading(
+            paint_mesh_shading45(
                 doc,
                 mesh_value,
                 resources=resources,
