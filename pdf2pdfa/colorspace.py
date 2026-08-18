@@ -18,6 +18,10 @@ class ColorProfileMismatchError(ValueError):
     pass
 
 
+class FullColorRewriteRequired(RuntimeError):
+    """Raised when assigning an arbitrary profile would be semantically unsafe."""
+
+
 def _stream_components(stream: Stream) -> int:
     try:
         return int(stream.stream_dict.get("/N", 0))
@@ -25,12 +29,12 @@ def _stream_components(stream: Stream) -> int:
         return 0
 
 
-def _bundled_profile(pdf: Pdf, filename: str, expected_components: int) -> Stream:
-    path = Path(str(files("pdf2pdfa").joinpath(f"data/{filename}")))
+def _bundled_rgb_profile(pdf: Pdf) -> Stream:
+    path = Path(str(files("pdf2pdfa").joinpath("data/sRGB.icc.b64")))
     profile = read_icc_profile(path)
-    if profile.components != expected_components:
+    if profile.components != 3:
         raise ColorProfileMismatchError(
-            f"Bundled {filename} has N={profile.components}, expected {expected_components}"
+            f"Bundled sRGB profile has N={profile.components}, expected 3"
         )
     return make_icc_stream(pdf, profile)
 
@@ -41,29 +45,40 @@ def normalize_resource_color_spaces(
     rgb_icc_stream: Stream | None = None,
     cmyk_icc_stream: Stream | None = None,
 ) -> None:
-    """Replace explicit DeviceRGB/DeviceCMYK resource references safely.
+    """Normalize explicit device color *resources* without guessing CMYK intent.
 
-    This function intentionally handles resource dictionaries and XObject/
-    pattern/shading resources only.  It does *not* pretend to perform a full
-    color-managed rewrite of arbitrary content streams; the orchestrator must
-    select a rendering/rewrite backend when preflight detects cases outside
-    this conservative fast path.
+    DeviceRGB resources may be calibrated to the bundled sRGB profile. A
+    DeviceCMYK resource is only rewritten if the caller supplies an explicit
+    four-component CMYK ICC stream whose source condition it intentionally
+    wants to assign. The normal converter does not guess one: automatic mode
+    routes CMYK documents to the full color-managed rewrite backend instead.
+
+    Content-stream device-color operators are outside this function's scope and
+    are detected by preflight so they can also route to a full rewrite.
     """
-    rgb = rgb_icc_stream or _bundled_profile(pdf, "sRGB.icc.b64", 3)
-    cmyk = cmyk_icc_stream or _bundled_profile(pdf, "CMYK.icc.b64", 4)
+    rgb = rgb_icc_stream or _bundled_rgb_profile(pdf)
     if _stream_components(rgb) != 3:
         raise ColorProfileMismatchError("RGB replacement profile must have /N 3")
-    if _stream_components(cmyk) != 4:
+    if cmyk_icc_stream is not None and _stream_components(cmyk_icc_stream) != 4:
         raise ColorProfileMismatchError("CMYK replacement profile must have /N 4")
 
     rgb_cs = Array([Name("/ICCBased"), rgb])
-    cmyk_cs = Array([Name("/ICCBased"), cmyk])
+    cmyk_cs = (
+        Array([Name("/ICCBased"), cmyk_icc_stream])
+        if cmyk_icc_stream is not None
+        else None
+    )
     seen: set[tuple[int, int]] = set()
 
     def replace(value: Any) -> Any:
         if value == Name("/DeviceRGB"):
             return rgb_cs
         if value == Name("/DeviceCMYK"):
+            if cmyk_cs is None:
+                raise FullColorRewriteRequired(
+                    "DeviceCMYK requires a full color-managed rewrite unless an explicit "
+                    "source CMYK ICC profile is supplied"
+                )
             return cmyk_cs
         return value
 
@@ -114,9 +129,9 @@ def normalize_resource_color_spaces(
                 if hasattr(candidate, "get"):
                     fix_resources(candidate.get("/Resources"))
 
-    logger.debug("Normalized explicit DeviceRGB/DeviceCMYK resource color spaces")
+    logger.debug("Normalized explicit device-color resource references")
 
 
 def sanitize_color_spaces(pdf: Pdf, rgb_icc_stream: Stream) -> None:
-    """Backward-compatible wrapper around conservative normalization."""
+    """Backward-compatible wrapper around conservative RGB normalization."""
     normalize_resource_color_spaces(pdf, rgb_icc_stream=rgb_icc_stream)
