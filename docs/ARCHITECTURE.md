@@ -24,8 +24,11 @@ safe object-level path      full rewrite path
                  v
             candidate PDF
                  |
-          optional/strict
-          veraPDF validation
+          optional veraPDF
+          conformance gate
+                 |
+          optional raster
+          fidelity gate
                  |
                  v
         atomic publication
@@ -41,45 +44,33 @@ Defines the supported PDF/A policies. PDF/A-1b, PDF/A-2b and PDF/A-3b are repres
 
 ### `preflight.py`
 
-Performs a non-mutating structural inspection. It currently records or detects:
-
-- encryption;
-- applied digital signatures;
-- JavaScript actions;
-- embedded files;
-- transparency;
-- annotations and appearance resources;
-- unembedded fonts;
-- Type0/CID and other complex fonts;
-- device-dependent color resources;
-- an existing OutputIntent;
-- an existing PDF/A XMP claim.
+Performs a non-mutating structural inspection. It records or detects encryption, applied digital signatures, JavaScript actions, embedded files, transparency, annotations/appearance resources, unembedded fonts, Type0/CID and other complex fonts, device-dependent color resources, an existing OutputIntent and an existing PDF/A XMP claim.
 
 Preflight findings are data (`PreflightReport`), not log messages. Backend selection consumes those findings.
 
 ### `backends/pikepdf_backend.py`
 
-This is the conservative fast path. It is chosen only when the object graph can be repaired without changing the meaning of character codes or requiring a rendered rewrite.
+The conservative fast path. It is chosen only when the object graph can be repaired without changing the meaning of character codes or requiring a rendered rewrite.
 
-It may:
-
-- embed a missing simple WinAnsi font when the mapping is demonstrably safe;
-- embed and describe ICC profiles;
-- normalize explicit RGB/CMYK resource color-space references;
-- update PDF/A metadata without falsifying the original creation date;
-- save with a PDF version compatible with the selected profile.
+It may embed a missing simple WinAnsi font when the mapping is demonstrably safe, embed/describe ICC profiles, normalize explicit RGB/CMYK resource references, update PDF/A metadata without falsifying the original creation date, and save with a PDF version compatible with the selected profile.
 
 It must refuse transformations that would require guessing.
 
 ### `backends/ghostscript.py`
 
-This is the optional full-rewrite path for inputs requiring reconstruction or rendering, such as PDF/A-1 transparency flattening or unsafe font structures. Ghostscript is an external dependency and is not bundled with this MIT-licensed Python package.
+The optional full-rewrite path for inputs requiring reconstruction or rendering, such as PDF/A-1 transparency flattening or unsafe font structures. Ghostscript is an external dependency and is not bundled with this MIT-licensed Python package.
 
 A generated PDF/A definition embeds a validated binary ICC profile and an OutputIntent. The backend writes only to a temporary candidate.
 
 ### `validator.py`
 
 Wraps veraPDF and parses `validationReport@isCompliant`. A process exit code is not treated as a conformance oracle. The requested PDF/A flavour is passed explicitly.
+
+### `fidelity.py`
+
+Provides a second, independent preservation oracle. Source and candidate are rendered through the same Ghostscript raster pipeline, then compared page-by-page with Pillow. The report records page counts, dimensions, mean raster error, changed-pixel ratio and per-page pass/fail state.
+
+`warn` mode reports drift without changing publication semantics. `strict` mode turns visual drift into a publication failure. Fidelity is not a substitute for veraPDF and does not prove text/link/annotation semantics.
 
 ### `security.py`
 
@@ -95,8 +86,9 @@ Owns the state machine:
 4. preserve an already-valid PDF unchanged when veraPDF confirms it;
 5. decrypt encrypted input to a private temporary file if necessary;
 6. select a backend;
-7. use Ghostscript as an automatic fallback when the pikepdf fast path fails or, in strict mode, when veraPDF rejects its candidate;
-8. publish with an atomic replace only after success.
+7. use Ghostscript as an automatic fallback when the pikepdf fast path fails or veraPDF rejects its candidate;
+8. run optional fidelity checking against the final candidate;
+9. publish with an atomic replace only after every requested gate passes.
 
 ## Backend selection
 
@@ -108,21 +100,23 @@ The full rewrite path is selected for features that cannot be safely repaired in
 
 `backend="ghostscript"` forces a full rewrite and fails clearly if Ghostscript is unavailable.
 
-## Validation modes
+## Validation and fidelity modes
 
 `validate=False` means the library produced a PDF/A *candidate*. The CLI deliberately reports this as `UNVERIFIED`.
 
 `validate=True` means the requested veraPDF flavour is a publication gate. The output path is not updated if validation fails.
 
+`fidelity="off"` disables visual comparison. `warn` records a report. `strict` blocks publication when the rendered result exceeds configured tolerances or the fidelity stack is unavailable.
+
 ## Atomicity
 
-All candidate files live in a temporary directory on the same filesystem as the destination. The final step uses `os.replace`, so a pre-existing output survives backend or validation failure and a successful candidate becomes visible atomically.
+All candidate files live in a temporary directory on the same filesystem as the destination. The final step uses `os.replace`, so a pre-existing output survives backend, validation or strict-fidelity failure and a successful candidate becomes visible atomically.
 
 ## Design constraints
 
 - Never infer glyph mappings for complex fonts.
 - Never equate an XMP PDF/A claim with conformance.
 - Never expose PDF passwords to subprocess command lines.
-- Never overwrite a destination with an unvalidated candidate in strict mode.
+- Never overwrite a destination when a requested validation/fidelity gate has failed.
 - Never silently invalidate an existing digital signature.
 - Prefer a clear failure over a plausible-looking but semantically damaged PDF.

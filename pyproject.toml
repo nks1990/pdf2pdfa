@@ -1,35 +1,53 @@
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf2pdfa"
-version = "3.1.0"
-description = "Convert arbitrary PDF files to PDF/A (1b, 2b, 3b)"
+version = "4.0.0"
+description = "Profile-aware PDF to PDF/A conversion with preflight, adaptive backends, validation and fidelity checks"
 authors = [{name = "nks1990", email = "nks1990@users.noreply.github.com"}]
-license = {text = "MIT"}
+license = {file = "LICENSE"}
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
+keywords = ["pdf", "pdfa", "archiving", "digital-preservation", "veraPDF", "ghostscript"]
 classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Graphics :: Graphics Conversion",
+    "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 
 dependencies = [
-    "pikepdf>=8.0.0",
-    "fonttools>=4.0.0",
-    "lxml>=4.0.0",
-    "click>=8.0",
+    "click>=8.1",
+    "fonttools>=4.45",
+    "pikepdf>=8.15",
 ]
 
 [project.optional-dependencies]
+fidelity = [
+    "Pillow>=10.0",
+]
 test = [
-    "pytest>=6.0",
+    "lxml>=5.0",
+    "Pillow>=10.0",
+    "pytest>=8.0",
+]
+dev = [
+    "build>=1.2",
+    "lxml>=5.0",
+    "Pillow>=10.0",
+    "pytest>=8.0",
+    "twine>=5.0",
 ]
 
 [project.scripts]
@@ -39,10 +57,15 @@ pdf2pdfa = "pdf2pdfa.cli:cli"
 Homepage = "https://github.com/nks1990/pdf2pdfa"
 Repository = "https://github.com/nks1990/pdf2pdfa"
 Issues = "https://github.com/nks1990/pdf2pdfa/issues"
+Changelog = "https://github.com/nks1990/pdf2pdfa/releases"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["pdf2pdfa*"]
 
 [tool.setuptools.package-data]
-pdf2pdfa = ["data/*.b64"]
+pdf2pdfa = ["data/*.b64", "py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

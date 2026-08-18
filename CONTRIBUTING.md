@@ -10,11 +10,17 @@ The project handles an archival format where a plausible-looking output is not e
 python -m venv .venv
 # activate the environment for your platform
 python -m pip install --upgrade pip
-pip install -e .[test]
-pytest -v
+python -m pip install -e ".[dev]"
+python scripts/check.py
 ```
 
-For strict integration testing, install veraPDF or use the pinned container used by CI. Ghostscript is optional unless you are testing the full-rewrite backend.
+There is intentionally no push/pull-request CI workflow. Contributors are responsible for running the manual quality gate before opening or merging a change.
+
+For release-level integration testing, install Ghostscript and veraPDF and run:
+
+```bash
+python scripts/check.py --full
+```
 
 ## Pull-request expectations
 
@@ -22,9 +28,10 @@ A change should normally include:
 
 - a focused explanation of the PDF/PDF-A behavior being changed;
 - regression tests for the affected structure;
-- no silent weakening of the validator or preflight policy;
+- no silent weakening of validator, preflight or fidelity policy;
 - documentation changes when public behavior changes;
-- an explicit note when fidelity or compatibility tradeoffs are involved.
+- an explicit note when fidelity or compatibility tradeoffs are involved;
+- the manual check command(s) that were run.
 
 ## PDF fixtures
 
@@ -43,15 +50,13 @@ Never add confidential customer documents.
 
 Do not add support for a PDF/A level by changing only XMP metadata.
 
-A new or modified profile needs:
-
-- a policy definition;
-- preflight rules;
-- backend behavior;
-- a veraPDF flavour test;
-- documentation of allowed and forbidden features.
+A new or modified profile needs a policy definition, preflight rules, backend behavior, a veraPDF flavour test and documentation of allowed/forbidden features.
 
 `validationReport@isCompliant` is the conformance decision. A veraPDF process exit code alone is not sufficient.
+
+## Fidelity changes
+
+Standards compliance and preservation fidelity are separate gates. Changes that can affect rendering should add or update visual-fidelity tests. Do not loosen default tolerances merely to hide a regression; document why a tolerance change is technically justified.
 
 ## Font changes
 

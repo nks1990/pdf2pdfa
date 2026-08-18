@@ -1,8 +1,8 @@
 # PDF/A compliance model
 
-`pdf2pdfa` distinguishes **conversion** from **conformance verification**.
+`pdf2pdfa` distinguishes **conversion**, **standards conformance verification**, and **visual fidelity verification**.
 
-A file is not considered verified merely because it contains `pdfaid:part` and `pdfaid:conformance` metadata. In strict mode, an external veraPDF validation result for the requested flavour is the conformance gate.
+A file is not considered verified merely because it contains `pdfaid:part` and `pdfaid:conformance` metadata. When validation is enabled, an external veraPDF result for the requested flavour is the conformance gate. Visual fidelity is a separate optional gate and cannot substitute for standards validation.
 
 ## Supported targets
 
@@ -12,7 +12,7 @@ A file is not considered verified merely because it contains `pdfaid:part` and `
 | PDF/A-2b | yes | no | no | no |
 | PDF/A-3b | yes | yes | no | no |
 
-The table describes the policy enforced by the current converter. A feature being permitted by a profile does not by itself prove that every representation of that feature is conformant; veraPDF remains the final oracle in strict mode.
+The table describes the policy enforced by the current converter. A feature being permitted by a profile does not by itself prove that every representation of that feature is conformant; veraPDF remains the standards oracle when validation is requested.
 
 ## Verified versus unverified output
 
@@ -29,9 +29,19 @@ Properties:
 
 ### Unverified
 
-Created without strict validation. This mode exists for environments where veraPDF is unavailable or where callers deliberately separate conversion and validation.
+Created without veraPDF validation. This mode exists for environments where veraPDF is unavailable or where callers deliberately separate conversion and validation.
 
 An unverified output is a **PDF/A candidate**, not a library guarantee of standards compliance. The CLI labels it `UNVERIFIED` for this reason.
+
+## Fidelity modes
+
+Visual fidelity answers a different question from PDF/A validation: whether the rendered result materially changed relative to the source.
+
+- `fidelity="off"` — no raster comparison;
+- `fidelity="warn"` — compare pages and return the report, but do not block publication;
+- `fidelity="strict"` — page-count, page-size or rendered-difference failures block atomic publication.
+
+The checker renders source and candidate through the same Ghostscript raster pipeline and compares the resulting images using bounded pixel tolerances. This detects many visible regressions, but it does not prove semantic equivalence of text, links, annotations or embedded files.
 
 ## Font policy
 
@@ -73,13 +83,13 @@ PDF/A-2 permits features such as transparency that PDF/A-1 does not. Embedded ar
 
 PDF/A-3 permits embedded files. The converter therefore does not automatically classify their mere presence as an error for a `3b` target.
 
-Preserving attachment semantics through a full rewrite can be backend-dependent. For workflows where attachments are business-critical, use strict validation and independently test that the expected attachments remain present.
+Preserving attachment semantics through a full rewrite can be backend-dependent. For workflows where attachments are business-critical, use validation and independently test that the expected attachments remain present.
 
 ## Existing PDF/A files
 
-When strict validation is enabled and the source claims the requested profile, `pdf2pdfa` validates the source first. If veraPDF confirms compliance, the source is copied byte-for-byte instead of being needlessly transformed.
+When validation is enabled and the source claims the requested profile, `pdf2pdfa` validates the source first. If veraPDF confirms compliance, the source is copied byte-for-byte instead of being needlessly transformed.
 
-Without strict validation, an existing XMP claim is not trusted enough to trigger passthrough.
+Without validation, an existing XMP claim is not trusted enough to trigger passthrough.
 
 ## Digital signatures
 
@@ -89,10 +99,11 @@ Any conversion that rewrites bytes can invalidate a signature. Signed PDFs are r
 
 ## Test strategy
 
-Compliance-related tests are intentionally split into three layers:
+Compliance-related testing is intentionally split into four layers:
 
 1. **unit and structural tests** for policies, parsing and object-graph decisions;
 2. **generated adversarial fixtures** for transparency, JavaScript, attachments, signatures, Type0/CID fonts and device color spaces;
-3. **veraPDF integration validation** as the standards conformance gate in CI.
+3. **veraPDF integration validation** as the standards conformance gate;
+4. **visual fidelity comparison** as an independent preservation oracle.
 
-A passing unit test suite without the veraPDF integration layer is not treated as proof of PDF/A compliance.
+The repository intentionally does not run these on push or pull request. Before release, `python scripts/check.py --full` runs the complete manual gate. A passing unit test suite without veraPDF integration is not treated as proof of PDF/A compliance.

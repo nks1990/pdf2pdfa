@@ -1,9 +1,12 @@
 # pdf2pdfa
 
-[![CI](https://github.com/nks1990/pdf2pdfa/actions/workflows/ci.yml/badge.svg)](https://github.com/nks1990/pdf2pdfa/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/pdf2pdfa)](https://pypi.org/project/pdf2pdfa/)
+[![Python](https://img.shields.io/pypi/pyversions/pdf2pdfa)](https://pypi.org/project/pdf2pdfa/)
+[![License](https://img.shields.io/pypi/l/pdf2pdfa)](LICENSE)
 
-Convert ordinary PDF documents into fully compliant **PDF/A** files (1b, 2b, 3b).
+`pdf2pdfa` is a Python library and CLI for converting PDFs to **PDF/A-1b, PDF/A-2b, or PDF/A-3b** with a conservative, profile-aware pipeline.
+
+Version 4 is designed around one rule: **do not claim compliance merely because PDF/A metadata was written**. The converter preflights the input, chooses the least destructive backend that can safely handle it, can require independent veraPDF validation before publication, and can optionally compare the rendered output against the source.
 
 ## Installation
 
@@ -11,98 +14,151 @@ Convert ordinary PDF documents into fully compliant **PDF/A** files (1b, 2b, 3b)
 pip install pdf2pdfa
 ```
 
-Requires Python 3.9+.
+Python 3.10+ is required.
 
-## CLI Usage
-
-### Single file
+For visual fidelity checking:
 
 ```bash
-pdf2pdfa convert input.pdf output.pdf
+pip install "pdf2pdfa[fidelity]"
 ```
 
-### Choose PDF/A level
+### Optional external tools
+
+- **veraPDF** — required only when `--validate` / `validate=True` is used. A failed validation blocks publication.
+- **Ghostscript** — used by the full-rewrite fallback for difficult inputs and by visual fidelity rendering. It is intentionally not bundled; install and license it separately for your environment.
+- **Pillow** — installed by the `fidelity` extra and used to compare rendered pages.
+
+## Quick start
+
+### CLI
 
 ```bash
 pdf2pdfa convert input.pdf output.pdf --level 2b
-pdf2pdfa batch *.pdf --level 3b
 ```
 
-Supported levels: `1b` (default), `2b`, `3b`.
-
-### Batch conversion
+Production-oriented conversion with both independent compliance validation and visual drift protection:
 
 ```bash
-pdf2pdfa batch *.pdf
+pdf2pdfa convert input.pdf output.pdf \
+  --level 2b \
+  --backend auto \
+  --validate \
+  --fidelity strict
 ```
 
-### Options
+Inspect a document without changing it:
 
-| Flag | Description |
-|------|-------------|
-| `--level LEVEL` | PDF/A conformance level: `1b`, `2b`, `3b` (default: `1b`) |
-| `--icc PATH` | Custom ICC profile |
-| `--font PATH` | Custom TrueType font for embedding |
-| `--validate` | Run verapdf validation after conversion |
-| `-v, --verbose` | Enable debug logging |
+```bash
+pdf2pdfa preflight input.pdf --level 1b
+pdf2pdfa preflight input.pdf --level 1b --json-output
+```
 
-## Python API
+Batch conversion:
+
+```bash
+pdf2pdfa batch *.pdf --level 3b --validate
+```
+
+### Python API
 
 ```python
 from pdf2pdfa import Converter
 
-conv = Converter()                    # PDF/A-1b (default)
-conv.convert("input.pdf", "output.pdf")
+converter = Converter(
+    level="2b",
+    backend="auto",
+    validate=True,
+    fidelity="strict",
+)
 
-conv = Converter(level="2b")          # PDF/A-2b
-conv.convert("input.pdf", "output_2b.pdf")
+report = converter.preflight("input.pdf")
+result = converter.convert("input.pdf", "output.pdf")
+
+print(result.backend)
+print(result.validation.compliant if result.validation else None)
+print(result.fidelity.passed if result.fidelity else None)
 ```
 
-## What it does
+## Conversion model
 
-- **Smart font matching**: resolves each PDF font to the best system substitute by family (serif/sans/mono), weight (bold/normal), and style (italic/roman)
-- Embeds missing fonts with correct WinAnsiEncoding width metrics
-- Attaches sRGB ICC profile with proper `/N` on the stream dictionary
-- Replaces DeviceRGB/DeviceCMYK color spaces with ICC-based equivalents
-- Sets PDF/A conformance in XMP metadata (1b, 2b, or 3b)
-- Synchronizes XMP and document info dictionary
+The v4 pipeline is deliberately adaptive:
 
-## v3.1.0 Highlights
+1. **Preflight** — detects signatures, encryption, JavaScript/actions, embedded files, transparency, font complexity, device color spaces and existing PDF/A claims.
+2. **Plan** — selects the conservative pikepdf fast path when object-level repair is considered safe, otherwise selects the Ghostscript rewrite backend.
+3. **Convert** — works in a private temporary area. Encrypted inputs are decrypted in-process; passwords are never forwarded to Ghostscript.
+4. **Validate** — when requested, veraPDF validates the exact requested flavour (`1b`, `2b`, `3b`). A non-compliant candidate is not published.
+5. **Fidelity** — optional `warn` or `strict` raster comparison checks page count, geometry and rendered appearance.
+6. **Atomic publish** — only the final candidate is moved into the requested output path. A failed conversion does not destroy an existing output file.
 
-- **New**: Multi-level PDF/A support — `--level 1b` (default), `--level 2b`, `--level 3b`
-- Python API: `Converter(level="2b")`
-- OutputIntent `/S` correctly uses `/GTS_PDFA1` for all PDF/A levels per ISO 19005
+### Backend choices
 
-## v3.0.0 Highlights
+- `auto` — recommended. Uses pikepdf when safe and falls back to Ghostscript when a full rewrite is required or when the fast-path candidate fails validation.
+- `pikepdf` — conservative object-level normalization only. Unsafe Type0/CID/custom-encoded font repair is refused instead of guessed.
+- `ghostscript` — forces full PDF/A rewrite through the external Ghostscript executable.
 
-- **New**: Font matching system — each unembedded font is resolved individually instead of using a single fallback
-  - Times-Roman → `times.ttf` (serif), Courier → `cour.ttf` (mono), Helvetica → `arial.ttf` (sans)
-  - Bold, italic, and bold-italic variants are matched to the correct system font files
-  - Graceful degradation: if an exact match isn't found, falls back through style → weight → category
-  - Cross-platform support: Windows, macOS, and Linux font paths
-  - `--font` flag still works as a user override for all fonts
-- **Refactored**: `converter.py` no longer contains platform-specific font search logic
+## PDF/A profiles
 
-## v2.0.0 Highlights
+| Profile | Supported | Notes |
+|---|---:|---|
+| PDF/A-1b | Yes | Transparency and embedded files require repair/removal according to the profile policy. |
+| PDF/A-2b | Yes | Allows transparency; uses the v4 profile-aware pipeline. |
+| PDF/A-3b | Yes | Supports the broader PDF/A-3 feature model, including embedded files. |
 
-- **Fixed**: ICC profile `/N` entry now correctly placed on stream dictionary (verapdf validation pass)
-- **Fixed**: Font glyph width mismatch for WinAnsiEncoding codes 128-159
-- **Fixed**: DeviceCMYK images now properly covered by CMYK OutputIntent
-- **New**: `batch` command for multi-file conversion
-- **New**: `--validate` flag for post-conversion verapdf check
-- **New**: `--font` flag for custom font embedding
-- **Removed**: `reportlab` dependency (no longer needed)
-- **Removed**: Python 3.7/3.8 support (minimum 3.9)
+`pdf2pdfa` distinguishes a **conversion attempt** from a **verified result**. If your workflow requires a compliance guarantee, use `--validate` and treat veraPDF as the authority.
+
+## Fonts
+
+The pikepdf fast path only embeds/replaces fonts when the mapping is demonstrably simple and safe. It does **not** silently rewrite Type0/CID, symbolic, Type3, or custom-encoded fonts as WinAnsi TrueType. Inputs requiring glyph-preserving reconstruction are routed to the full-rewrite backend in `auto` mode.
+
+## Color management
+
+OutputIntent and resource color-space profiles are separate concepts in v4. ICC profiles are parsed and checked for component count; an arbitrary CMYK profile can no longer be accidentally reused as an RGB ICCBased color space. Bundled RGB/CMYK profiles are used for matching device-space resources.
+
+## Encrypted and signed PDFs
+
+Encrypted PDFs are supported when a password is supplied. For CLI use, avoid putting secrets in shell arguments:
+
+```bash
+PDF2PDFA_PASSWORD='secret' pdf2pdfa convert protected.pdf output.pdf --validate
+```
+
+or:
+
+```bash
+pdf2pdfa convert protected.pdf output.pdf --password-file ./password.txt
+```
+
+Digital signatures are different: conversion changes the PDF byte stream and can invalidate an existing signature. Signed PDFs are therefore refused by default. Override this only when invalidation is intentional with `--allow-signature-invalidation` or the equivalent Python option.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Compliance model](docs/COMPLIANCE.md)
+- [Testing strategy](docs/TESTING.md)
+- [Security policy](SECURITY.md)
+- [Contributing](CONTRIBUTING.md)
 
 ## Development
+
+The repository intentionally has **no push/pull-request CI workflow**. Run the full checks locally before merging or releasing:
 
 ```bash
 git clone https://github.com/nks1990/pdf2pdfa.git
 cd pdf2pdfa
-pip install -e .[test]
-pytest -v
+python -m pip install -e ".[dev]"
+pytest
+python -m build
+python -m twine check dist/*
 ```
+
+For end-to-end compliance testing, install veraPDF and Ghostscript and run the integration tests in an environment where both executables are available.
+
+## Release policy
+
+PyPI publication is isolated from continuous integration. The GitHub release workflow is tag-triggered and only builds/publishes a release; ordinary pushes and pull requests do not run workflows.
+
+Before tagging a release, verify tests, package build, `twine check`, veraPDF conversion for all supported flavours, and fidelity smoke tests manually.
 
 ## License
 
-MIT - see [LICENSE](LICENSE).
+MIT for `pdf2pdfa` itself. External tools such as Ghostscript and veraPDF have their own licenses and are not bundled with this package.
