@@ -13,6 +13,7 @@ logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
 
 _LEVEL = click.Choice(["1b", "2b", "3b"], case_sensitive=False)
 _BACKEND = click.Choice(["auto", "pikepdf", "ghostscript"], case_sensitive=False)
+_FIDELITY = click.Choice(["off", "warn", "strict"], case_sensitive=False)
 
 
 @click.group()
@@ -42,6 +43,7 @@ def _converter(
     icc: str | None,
     backend: str,
     validate: bool,
+    fidelity: str,
     allow_signature_invalidation: bool,
     ghostscript: str | None,
     verapdf: str,
@@ -54,6 +56,7 @@ def _converter(
         level=level,
         backend=backend.lower(),
         validate=validate,
+        fidelity=fidelity.lower(),
         allow_signature_invalidation=allow_signature_invalidation,
         ghostscript_executable=ghostscript,
         verapdf_executable=verapdf,
@@ -61,12 +64,30 @@ def _converter(
     )
 
 
+def _fidelity_label(result) -> str:
+    report = result.fidelity
+    if report is None:
+        return "FIDELITY-OFF"
+    if not report.available:
+        return "FIDELITY-UNAVAILABLE"
+    return "FIDELITY-PASS" if report.passed else "FIDELITY-WARN"
+
+
 @cli.command("preflight")
 @click.argument("input", type=click.Path(exists=True, dir_okay=False))
 @click.option("--level", type=_LEVEL, default="1b", show_default=True)
 @click.option("--json-output", is_flag=True, help="Emit machine-readable JSON")
-@click.option("--password-file", type=click.Path(exists=True, dir_okay=False), help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD")
-@click.option("--max-input-mib", type=click.IntRange(min=1), default=None, help="Reject inputs larger than this size")
+@click.option(
+    "--password-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD",
+)
+@click.option(
+    "--max-input-mib",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Reject inputs larger than this size",
+)
 def preflight_cmd(
     input: str,
     level: str,
@@ -116,15 +137,45 @@ def preflight_cmd(
 @click.argument("input", type=click.Path(exists=True, dir_okay=False))
 @click.argument("output", type=click.Path(dir_okay=False))
 @click.option("--icc", type=click.Path(dir_okay=False), default=None, help="OutputIntent ICC profile")
-@click.option("--font", type=click.Path(dir_okay=False), default=None, help="Explicit font override for safe simple-font embedding")
+@click.option(
+    "--font",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Explicit font override for safe simple-font embedding",
+)
 @click.option("--level", type=_LEVEL, default="1b", show_default=True, help="PDF/A conformance level")
 @click.option("--backend", type=_BACKEND, default="auto", show_default=True)
 @click.option("--validate", is_flag=True, help="Require veraPDF compliance before publishing OUTPUT")
-@click.option("--allow-signature-invalidation", is_flag=True, help="Explicitly allow conversion of signed PDFs")
-@click.option("--ghostscript", type=click.Path(dir_okay=False), default=None, help="Ghostscript executable override")
+@click.option(
+    "--fidelity",
+    type=_FIDELITY,
+    default="off",
+    show_default=True,
+    help="Visual comparison: warn reports drift; strict blocks publication",
+)
+@click.option(
+    "--allow-signature-invalidation",
+    is_flag=True,
+    help="Explicitly allow conversion of signed PDFs",
+)
+@click.option(
+    "--ghostscript",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Ghostscript executable override",
+)
 @click.option("--verapdf", default="verapdf", show_default=True, help="veraPDF executable")
-@click.option("--password-file", type=click.Path(exists=True, dir_okay=False), help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD")
-@click.option("--max-input-mib", type=click.IntRange(min=1), default=None, help="Reject inputs larger than this size")
+@click.option(
+    "--password-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD",
+)
+@click.option(
+    "--max-input-mib",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Reject inputs larger than this size",
+)
 def convert(
     input: str,
     output: str,
@@ -133,6 +184,7 @@ def convert(
     level: str,
     backend: str,
     validate: bool,
+    fidelity: str,
     allow_signature_invalidation: bool,
     ghostscript: str | None,
     verapdf: str,
@@ -145,6 +197,7 @@ def convert(
         icc=icc,
         backend=backend,
         validate=validate,
+        fidelity=fidelity,
         allow_signature_invalidation=allow_signature_invalidation,
         ghostscript=ghostscript,
         verapdf=verapdf,
@@ -165,7 +218,8 @@ def convert(
     encrypted = ", decrypted" if result.source_was_encrypted else ""
     click.echo(
         f"Converted {input} -> {output} "
-        f"(PDF/A-{result.level}, {result.backend}{fallback}{encrypted}, {status})"
+        f"(PDF/A-{result.level}, {result.backend}{fallback}{encrypted}, "
+        f"{status}, {_fidelity_label(result)})"
     )
 
 
@@ -177,10 +231,15 @@ def convert(
 @click.option("--level", type=_LEVEL, default="1b", show_default=True)
 @click.option("--backend", type=_BACKEND, default="auto", show_default=True)
 @click.option("--validate", is_flag=True, help="Require veraPDF compliance for every output")
+@click.option("--fidelity", type=_FIDELITY, default="off", show_default=True)
 @click.option("--allow-signature-invalidation", is_flag=True)
 @click.option("--ghostscript", type=click.Path(dir_okay=False), default=None)
 @click.option("--verapdf", default="verapdf", show_default=True)
-@click.option("--password-file", type=click.Path(exists=True, dir_okay=False), help="Password shared by encrypted batch inputs; alternatively set PDF2PDFA_PASSWORD")
+@click.option(
+    "--password-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Password shared by encrypted batch inputs; alternatively set PDF2PDFA_PASSWORD",
+)
 @click.option("--max-input-mib", type=click.IntRange(min=1), default=None)
 def batch(
     inputs: tuple[str, ...],
@@ -190,6 +249,7 @@ def batch(
     level: str,
     backend: str,
     validate: bool,
+    fidelity: str,
     allow_signature_invalidation: bool,
     ghostscript: str | None,
     verapdf: str,
@@ -205,6 +265,7 @@ def batch(
         icc=icc,
         backend=backend,
         validate=validate,
+        fidelity=fidelity,
         allow_signature_invalidation=allow_signature_invalidation,
         ghostscript=ghostscript,
         verapdf=verapdf,
@@ -218,7 +279,10 @@ def batch(
         try:
             result = conv.convert(source, output, font_path=font, password=password)
             status = "VERIFIED" if result.validation else "UNVERIFIED"
-            click.echo(f"Converted {source} -> {output} [{result.backend}, {status}]")
+            click.echo(
+                f"Converted {source} -> {output} "
+                f"[{result.backend}, {status}, {_fidelity_label(result)}]"
+            )
         except Exception as exc:
             failures += 1
             click.echo(f"FAILED {source}: {exc}", err=True)

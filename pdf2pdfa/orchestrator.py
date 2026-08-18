@@ -3,8 +3,8 @@
 The orchestrator is deliberately conservative: it preserves already-valid
 files, uses pikepdf only for object-level repairs proven safe by preflight, and
 falls back to a full Ghostscript rewrite for features that require rendering or
-reconstruction. When validation is requested, no candidate is published until
-veraPDF confirms the requested flavour.
+reconstruction. When validation or strict fidelity checking is requested, no
+candidate is published until the requested gates pass.
 """
 
 from __future__ import annotations
@@ -21,6 +21,13 @@ from .backends import (
     ConversionBackendError,
     GhostscriptBackend,
     PikePDFBackend,
+)
+from .fidelity import (
+    FidelityError,
+    FidelityMode,
+    FidelityReport,
+    FidelityUnavailableError,
+    VisualFidelityChecker,
 )
 from .model import PreflightReport
 from .preflight import analyze_pdf
@@ -46,6 +53,7 @@ class ConversionResult:
     backend: str
     preflight: PreflightReport
     validation: ValidationResult | None
+    fidelity: FidelityReport | None = None
     fallback_used: bool = False
     source_was_already_compliant: bool = False
     source_was_encrypted: bool = False
@@ -60,8 +68,6 @@ def _claim_matches(report: PreflightReport, level: str) -> bool:
 
 
 def _requires_full_rewrite(report: PreflightReport) -> bool:
-    # Encryption is intentionally absent: it is safely removed in-process to a
-    # private temporary PDF before either backend sees the source.
     repair_codes = {
         "javascript",
         "embedded_files",
@@ -83,28 +89,78 @@ class ConversionOrchestrator:
         *,
         backend: BackendChoice = "auto",
         validate: bool = False,
+        fidelity: FidelityMode = "off",
         allow_signature_invalidation: bool = False,
         ghostscript_executable: str | None = None,
         verapdf_executable: str = "verapdf",
         timeout: int = 300,
         max_input_bytes: int | None = None,
+        fidelity_dpi: int = 120,
+        fidelity_pixel_tolerance: int = 12,
+        fidelity_max_mean_error: float = 2.0,
+        fidelity_max_changed_pixel_ratio: float = 0.02,
     ) -> None:
         if backend not in ("auto", "pikepdf", "ghostscript"):
             raise ValueError("backend must be one of: auto, pikepdf, ghostscript")
+        if fidelity not in ("off", "warn", "strict"):
+            raise ValueError("fidelity must be one of: off, warn, strict")
         if max_input_bytes is not None and max_input_bytes <= 0:
             raise ValueError("max_input_bytes must be positive when provided")
         self.backend = backend
         self.validate_output = validate
+        self.fidelity_mode = fidelity
         self.allow_signature_invalidation = allow_signature_invalidation
         self.max_input_bytes = max_input_bytes
         self.fast = PikePDFBackend()
         self.full = GhostscriptBackend(ghostscript_executable, timeout=timeout)
         self.validator = VeraPDFValidator(verapdf_executable, timeout=timeout)
+        self.fidelity_checker = VisualFidelityChecker(
+            ghostscript_executable,
+            timeout=timeout,
+            dpi=fidelity_dpi,
+            pixel_tolerance=fidelity_pixel_tolerance,
+            max_mean_error=fidelity_max_mean_error,
+            max_changed_pixel_ratio=fidelity_max_changed_pixel_ratio,
+        )
 
     def _validate(self, candidate: Path, level: str) -> ValidationResult | None:
         if not self.validate_output:
             return None
         return self.validator.validate(candidate, level)
+
+    def _check_fidelity(self, source: Path, candidate: Path) -> FidelityReport | None:
+        if self.fidelity_mode == "off":
+            return None
+        checker = self.fidelity_checker
+        try:
+            report = checker.compare(source, candidate)
+        except FidelityUnavailableError as exc:
+            if self.fidelity_mode == "strict":
+                raise ConversionError(str(exc)) from exc
+            return FidelityReport.unavailable(
+                str(exc),
+                dpi=checker.dpi,
+                pixel_tolerance=checker.pixel_tolerance,
+                max_mean_error=checker.max_mean_error,
+                max_changed_pixel_ratio=checker.max_changed_pixel_ratio,
+            )
+        except FidelityError as exc:
+            if self.fidelity_mode == "strict":
+                raise ConversionError(f"Visual fidelity check failed: {exc}") from exc
+            return FidelityReport.unavailable(
+                str(exc),
+                dpi=checker.dpi,
+                pixel_tolerance=checker.pixel_tolerance,
+                max_mean_error=checker.max_mean_error,
+                max_changed_pixel_ratio=checker.max_changed_pixel_ratio,
+            )
+
+        if self.fidelity_mode == "strict" and not report.passed:
+            raise ConversionError(
+                "Visual fidelity check failed: "
+                f"{report.reason or 'rendered output changed beyond tolerance'}"
+            )
+        return report
 
     def convert(
         self,
@@ -134,12 +190,12 @@ class ConversionOrchestrator:
                 "set allow_signature_invalidation=True only if that is intentional."
             )
 
-        # A validated already-compliant, unencrypted PDF is the safest possible
-        # conversion: do not rewrite it at all.
         if self.validate_output and not encrypted and _claim_matches(report, policy.level):
             existing = self.validator.validate(input_path, policy.level)
             if existing.compliant:
-                with tempfile.TemporaryDirectory(prefix="pdf2pdfa-", dir=output_path.parent) as tempdir:
+                with tempfile.TemporaryDirectory(
+                    prefix="pdf2pdfa-", dir=output_path.parent
+                ) as tempdir:
                     candidate = Path(tempdir) / "candidate.pdf"
                     shutil.copy2(input_path, candidate)
                     os.replace(candidate, output_path)
@@ -149,6 +205,7 @@ class ConversionOrchestrator:
                     backend="passthrough",
                     preflight=report,
                     validation=existing,
+                    fidelity=None,
                     source_was_already_compliant=True,
                     source_was_encrypted=False,
                 )
@@ -170,13 +227,13 @@ class ConversionOrchestrator:
             raise BackendUnavailableError(f"Selected backend '{selected.name}' is unavailable")
 
         fallback_used = False
-        with tempfile.TemporaryDirectory(prefix="pdf2pdfa-", dir=output_path.parent) as tempdir_name:
+        fidelity_report: FidelityReport | None = None
+        with tempfile.TemporaryDirectory(
+            prefix="pdf2pdfa-", dir=output_path.parent
+        ) as tempdir_name:
             tempdir = Path(tempdir_name)
             backend_input = input_path
             if encrypted:
-                # Password handling ends here. External backends only receive an
-                # unencrypted private working copy and never see the password in
-                # argv, environment variables or logs.
                 backend_input = decrypt_to_file(
                     input_path,
                     tempdir / "decrypted-input.pdf",
@@ -227,6 +284,8 @@ class ConversionOrchestrator:
 
             if not candidate.is_file() or candidate.stat().st_size == 0:
                 raise ConversionError("Conversion backend did not produce a PDF candidate")
+
+            fidelity_report = self._check_fidelity(backend_input, candidate)
             os.replace(candidate, output_path)
 
         return ConversionResult(
@@ -235,6 +294,7 @@ class ConversionOrchestrator:
             backend=selected.name,
             preflight=report,
             validation=validation,
+            fidelity=fidelity_report,
             fallback_used=fallback_used,
             source_was_encrypted=encrypted,
         )
