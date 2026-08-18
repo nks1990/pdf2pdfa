@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -62,8 +63,6 @@ class ICCProfile:
     def has_pcs_to_device(self) -> bool:
         if any(tag in self.tags for tag in ("B2A0", "mBA ")):
             return True
-        # Matrix/TRC display RGB profiles are invertible by a color engine even
-        # without an explicit B2A table.
         if self.color_space == "RGB ":
             return all(tag in self.tags for tag in ("rXYZ", "gXYZ", "bXYZ", "rTRC", "gTRC", "bTRC"))
         if self.color_space == "GRAY":
@@ -120,7 +119,7 @@ def parse_icc(data: bytes) -> ICCProfile:
         pcs=pcs,
         tags=tags,
     )
-    _ = profile.components  # validate the data color-space signature now
+    _ = profile.components
     return profile
 
 
@@ -134,8 +133,8 @@ def load_icc(path: str | Path) -> ICCProfile:
     if compact and all(ch.isalnum() or ch in "+/=" for ch in compact):
         try:
             decoded = base64.b64decode(compact, validate=True)
-            if decoded.startswith(b"\x00") or len(decoded) >= 132:
+            if len(decoded) >= 132:
                 return parse_icc(decoded)
-        except (ValueError, base64.binascii.Error):
+        except (ValueError, binascii.Error):
             pass
     return parse_icc(raw)
