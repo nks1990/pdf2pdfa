@@ -142,6 +142,29 @@ class TrueTypeTextRenderer:
             raise TextRenderError(f"invalid PDF text rendering mode {mode}")
         self.state.render_mode = int(mode)
 
+    def _advance_item(self, item: object) -> None:
+        spacing = self.state.char_spacing + (
+            self.state.word_spacing if bool(getattr(item, "word_space", False)) else 0.0
+        )
+        if isinstance(item, Type3GlyphItem):
+            # FontMatrix maps the Type 3 horizontal character-space width vector
+            # into text space. Horizontal scaling affects the text-space X
+            # component and spacing, while font size scales both dimensions.
+            tx = (
+                item.advance_x * self.state.font_size + spacing
+            ) * self.state.horizontal_scale
+            ty = item.advance_y * self.state.font_size
+            self.state.translate_text(tx, ty)
+            return
+
+        width_1000 = getattr(item, "width_1000", None)
+        if width_1000 is None:
+            raise TextRenderError("font decoder returned glyph without width_1000")
+        tx = (
+            float(width_1000) / 1000.0 * self.state.font_size + spacing
+        ) * self.state.horizontal_scale
+        self.state.translate_text(tx)
+
     def show(self, data: bytes, style: TextPaintStyle) -> None:
         self._require_text()
         font = self._require_font()
@@ -151,15 +174,7 @@ class TrueTypeTextRenderer:
             raise TextRenderError(str(exc)) from exc
         for item in items:
             self._paint_item(item, style)
-            width_1000 = getattr(item, "width_1000", None)
-            if width_1000 is None:
-                raise TextRenderError("font decoder returned glyph without width_1000")
-            advance = (
-                float(width_1000) / 1000.0 * self.state.font_size
-                + self.state.char_spacing
-                + (self.state.word_spacing if bool(getattr(item, "word_space", False)) else 0.0)
-            ) * self.state.horizontal_scale
-            self.state.translate_text(advance)
+            self._advance_item(item)
 
     def show_array(self, values: list[object], style: TextPaintStyle) -> None:
         self._require_text()
@@ -209,8 +224,6 @@ class TrueTypeTextRenderer:
         return self.ctm.concat(self.state.text_matrix).concat(text_scale)
 
     def _type3_transform(self, font: Type3TextFont) -> Matrix:
-        # FontMatrix maps Type 3 character space into text space. Font size,
-        # horizontal scale and rise are then part of the text rendering matrix.
         text_scale = Matrix(
             self.state.font_size * self.state.horizontal_scale,
             0,
@@ -231,7 +244,6 @@ class TrueTypeTextRenderer:
         if isinstance(font, Type3TextFont):
             mode = self.state.render_mode
             if mode == 3:
-                # Invisible text advances normally but paints nothing.
                 return
             if mode != 0:
                 raise TextRenderError(
