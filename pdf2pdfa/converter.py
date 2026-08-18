@@ -5,6 +5,7 @@ from __future__ import annotations
 from importlib.resources import files
 from pathlib import Path
 
+from .fidelity import FidelityMode
 from .orchestrator import BackendChoice, ConversionOrchestrator, ConversionResult
 from .preflight import analyze_pdf
 from .profiles import get_policy
@@ -16,7 +17,9 @@ class Converter:
     ``backend='auto'`` preserves already-valid files, uses the conservative
     pikepdf fast path when preflight proves that safe, and falls back to
     Ghostscript when a full rewrite is required. ``validate=True`` makes
-    veraPDF conformance a publication gate.
+    veraPDF conformance a publication gate. ``fidelity='strict'`` additionally
+    refuses to publish output whose rendered appearance changes beyond the
+    configured tolerances.
     """
 
     def __init__(
@@ -26,11 +29,16 @@ class Converter:
         *,
         backend: BackendChoice = "auto",
         validate: bool = False,
+        fidelity: FidelityMode = "off",
         allow_signature_invalidation: bool = False,
         ghostscript_executable: str | None = None,
         verapdf_executable: str = "verapdf",
         timeout: int = 300,
         max_input_bytes: int | None = None,
+        fidelity_dpi: int = 120,
+        fidelity_pixel_tolerance: int = 12,
+        fidelity_max_mean_error: float = 2.0,
+        fidelity_max_changed_pixel_ratio: float = 0.02,
     ) -> None:
         policy = get_policy(level)
         self.level = policy.level
@@ -39,11 +47,16 @@ class Converter:
         self._orchestrator = ConversionOrchestrator(
             backend=backend,
             validate=validate,
+            fidelity=fidelity,
             allow_signature_invalidation=allow_signature_invalidation,
             ghostscript_executable=ghostscript_executable,
             verapdf_executable=verapdf_executable,
             timeout=timeout,
             max_input_bytes=max_input_bytes,
+            fidelity_dpi=fidelity_dpi,
+            fidelity_pixel_tolerance=fidelity_pixel_tolerance,
+            fidelity_max_mean_error=fidelity_max_mean_error,
+            fidelity_max_changed_pixel_ratio=fidelity_max_changed_pixel_ratio,
         )
 
     def preflight(
