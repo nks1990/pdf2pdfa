@@ -1,8 +1,8 @@
-"""Owned visual-fidelity gate backed by the pure-Python page renderer.
+"""Owned visual-fidelity gate backed by the full pure-Python renderer.
 
 No image library or external rasterizer is involved. Source and candidate are
-rendered through the same owned transparency-capable interpreter and compared
-in memory. The checker is deliberately fail-closed: an unsupported painting
+rendered through the same highest-capability owned interpreter and compared in
+memory. The checker is deliberately fail-closed: an unsupported painting
 feature makes fidelity unavailable rather than being skipped.
 """
 
@@ -12,9 +12,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .document import PDFDocument
+from .owned_renderer import FullOwnedPageRenderer
 from .page_render import RenderingError, UnsupportedRenderingError
 from .structure import PageView, walk_pages
-from .transparency_render import TransparencyRenderer
 
 
 class VisualFidelityError(RuntimeError):
@@ -78,7 +78,7 @@ class NativeVisualFidelityChecker:
 
     def _render(self, doc: PDFDocument, page: PageView, page_number: int):
         try:
-            return TransparencyRenderer(doc, dpi=self.dpi).render_page(page)
+            return FullOwnedPageRenderer(doc, dpi=self.dpi).render_page(page)
         except (UnsupportedRenderingError, RenderingError, ValueError) as exc:
             raise VisualFidelityError(
                 f"owned renderer cannot evaluate page {page_number}: {exc}"
