@@ -1,6 +1,15 @@
-"""PDF to PDF/A conversion library (supports 1b, 2b, 3b)."""
+"""Adaptive PDF to PDF/A conversion library."""
+
+from __future__ import annotations
+
+from importlib.metadata import PackageNotFoundError, version
 
 from .converter import Converter
+from .orchestrator import ConversionResult
 
-__all__ = ["Converter", "__version__"]
-__version__ = "3.1.0"
+try:
+    __version__ = version("pdf2pdfa")
+except PackageNotFoundError:  # pragma: no cover - source tree without installation
+    __version__ = "0+unknown"
+
+__all__ = ["Converter", "ConversionResult", "__version__"]
