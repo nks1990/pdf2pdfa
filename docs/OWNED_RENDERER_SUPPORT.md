@@ -16,7 +16,8 @@ an end-to-end regression.
 - raw/general-filtered images, baseline JPEG and CCITT Group 3/4/MR fax images;
 - image masks and soft masks;
 - device/calibrated/ICC/Indexed/Separation/DeviceN color paths already supported by the color engine;
-- blend modes and isolated transparency groups;
+- blend modes and isolated transparency groups in the owned RGB compositor;
+- non-isolated transparency groups with implicit/DeviceRGB blending space, including translucent backdrops and boundary alpha/blend/soft-mask composition;
 - function-based ShadingType 1 surfaces with two-input owned PDF Functions;
 - axial/radial ShadingType 2/3;
 - Gouraud mesh ShadingType 4/5, including filtered mesh streams;
@@ -35,7 +36,8 @@ an end-to-end regression.
 - Type1 PFA/PFB outline rendering;
 - predefined non-Identity CMaps not yet bundled by the owned CMap layer;
 - JPX/JPEG 2000 and JBIG2 image codecs;
-- non-isolated and knockout transparency groups;
+- knockout transparency groups;
+- transparency groups with an explicit non-RGB blending color space;
 - annotation appearance transparency flattening;
 - Type3 stroke/clip text render modes and nested text where not already supported.
 

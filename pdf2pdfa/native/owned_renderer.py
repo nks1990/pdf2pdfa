@@ -12,12 +12,14 @@ from pathlib import Path as FSPath
 from .ccitt_render import CCITTImageRendererMixin
 from .cff_render import CFFTextPageRendererMixin
 from .document import PDFDocument
+from .nonisolated_transparency import NonIsolatedTransparencyRendererMixin
 from .page_render import RenderedPage
 from .pattern_dispatch import CanonicalPatternShadingMixin
 from .pattern_render import PatternShadingRendererMixin
 from .shading_render import ShadingRendererMixin
 from .structure import walk_pages
 from .tiling_pattern import ColoredTilingPatternRendererMixin
+from .transparency_group_syntax import TransparencyGroupSyntaxMixin
 from .transparency_render import TransparencyRenderer
 from .uncolored_pattern import UncoloredTilingPatternRendererMixin
 from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
@@ -32,6 +34,8 @@ class FullOwnedPageRenderer(
     PatternShadingRendererMixin,
     ShadingRendererMixin,
     CFFTextPageRendererMixin,
+    TransparencyGroupSyntaxMixin,
+    NonIsolatedTransparencyRendererMixin,
     TransparencyRenderer,
 ):
     """Canonical renderer used by production conversion gates."""
