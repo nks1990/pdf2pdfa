@@ -37,7 +37,10 @@ class _Function2D:
         if any(function.inputs != 2 for function in self.functions):
             raise ShadingError("ShadingType 1 functions shall have exactly two inputs")
         self.components = components
-        sample = self.evaluate(0.5, 0.5)
+        first = self.functions[0]
+        sample_x = (first.domain[0] + first.domain[1]) * 0.5
+        sample_y = (first.domain[2] + first.domain[3]) * 0.5
+        sample = self.evaluate(sample_x, sample_y)
         if len(sample) != components:
             raise ShadingError(
                 f"ShadingType 1 Function produces {len(sample)} components, expected {components}"
@@ -98,10 +101,10 @@ def paint_function_shading(
         else (0.0, 1.0, 0.0, 1.0)
     )
     x0, x1, y0, y1 = domain
-    if x0 == x1 or y0 == y1:
-        raise ShadingError("ShadingType 1 Domain dimensions shall be non-zero")
-    xmin, xmax = sorted((x0, x1))
-    ymin, ymax = sorted((y0, y1))
+    if x1 <= x0 or y1 <= y0:
+        raise ShadingError("ShadingType 1 Domain shall contain increasing x/y bounds")
+    xmin, xmax = x0, x1
+    ymin, ymax = y0, y1
 
     try:
         color_space = parse_color_space(
