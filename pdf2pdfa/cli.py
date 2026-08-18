@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 import click
@@ -23,6 +24,18 @@ def cli(verbose: bool) -> None:
         logging.getLogger().setLevel(logging.DEBUG)
 
 
+def _password(password_file: str | None) -> str | None:
+    from .security import read_password_file
+
+    if password_file:
+        return read_password_file(password_file)
+    return os.environ.get("PDF2PDFA_PASSWORD")
+
+
+def _max_bytes(max_input_mib: int | None) -> int | None:
+    return max_input_mib * 1024 * 1024 if max_input_mib is not None else None
+
+
 def _converter(
     *,
     level: str,
@@ -32,6 +45,7 @@ def _converter(
     allow_signature_invalidation: bool,
     ghostscript: str | None,
     verapdf: str,
+    max_input_mib: int | None,
 ):
     from .converter import Converter
 
@@ -43,6 +57,7 @@ def _converter(
         allow_signature_invalidation=allow_signature_invalidation,
         ghostscript_executable=ghostscript,
         verapdf_executable=verapdf,
+        max_input_bytes=_max_bytes(max_input_mib),
     )
 
 
@@ -50,11 +65,28 @@ def _converter(
 @click.argument("input", type=click.Path(exists=True, dir_okay=False))
 @click.option("--level", type=_LEVEL, default="1b", show_default=True)
 @click.option("--json-output", is_flag=True, help="Emit machine-readable JSON")
-def preflight_cmd(input: str, level: str, json_output: bool) -> None:
+@click.option("--password-file", type=click.Path(exists=True, dir_okay=False), help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD")
+@click.option("--max-input-mib", type=click.IntRange(min=1), default=None, help="Reject inputs larger than this size")
+def preflight_cmd(
+    input: str,
+    level: str,
+    json_output: bool,
+    password_file: str | None,
+    max_input_mib: int | None,
+) -> None:
     """Inspect INPUT without modifying it."""
     from .preflight import analyze_pdf
 
-    report = analyze_pdf(input, level)
+    try:
+        report = analyze_pdf(
+            input,
+            level,
+            password=_password(password_file),
+            max_input_bytes=_max_bytes(max_input_mib),
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
     if json_output:
         payload = {
             "level": report.level,
@@ -91,6 +123,8 @@ def preflight_cmd(input: str, level: str, json_output: bool) -> None:
 @click.option("--allow-signature-invalidation", is_flag=True, help="Explicitly allow conversion of signed PDFs")
 @click.option("--ghostscript", type=click.Path(dir_okay=False), default=None, help="Ghostscript executable override")
 @click.option("--verapdf", default="verapdf", show_default=True, help="veraPDF executable")
+@click.option("--password-file", type=click.Path(exists=True, dir_okay=False), help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD")
+@click.option("--max-input-mib", type=click.IntRange(min=1), default=None, help="Reject inputs larger than this size")
 def convert(
     input: str,
     output: str,
@@ -102,6 +136,8 @@ def convert(
     allow_signature_invalidation: bool,
     ghostscript: str | None,
     verapdf: str,
+    password_file: str | None,
+    max_input_mib: int | None,
 ) -> None:
     """Convert INPUT PDF to PDF/A OUTPUT."""
     conv = _converter(
@@ -112,16 +148,24 @@ def convert(
         allow_signature_invalidation=allow_signature_invalidation,
         ghostscript=ghostscript,
         verapdf=verapdf,
+        max_input_mib=max_input_mib,
     )
     try:
-        result = conv.convert(input, output, font_path=font)
+        result = conv.convert(
+            input,
+            output,
+            font_path=font,
+            password=_password(password_file),
+        )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
     status = "VERIFIED" if result.validation is not None else "UNVERIFIED"
     fallback = ", fallback" if result.fallback_used else ""
+    encrypted = ", decrypted" if result.source_was_encrypted else ""
     click.echo(
-        f"Converted {input} -> {output} (PDF/A-{result.level}, {result.backend}{fallback}, {status})"
+        f"Converted {input} -> {output} "
+        f"(PDF/A-{result.level}, {result.backend}{fallback}{encrypted}, {status})"
     )
 
 
@@ -136,6 +180,8 @@ def convert(
 @click.option("--allow-signature-invalidation", is_flag=True)
 @click.option("--ghostscript", type=click.Path(dir_okay=False), default=None)
 @click.option("--verapdf", default="verapdf", show_default=True)
+@click.option("--password-file", type=click.Path(exists=True, dir_okay=False), help="Password shared by encrypted batch inputs; alternatively set PDF2PDFA_PASSWORD")
+@click.option("--max-input-mib", type=click.IntRange(min=1), default=None)
 def batch(
     inputs: tuple[str, ...],
     suffix: str,
@@ -147,6 +193,8 @@ def batch(
     allow_signature_invalidation: bool,
     ghostscript: str | None,
     verapdf: str,
+    password_file: str | None,
+    max_input_mib: int | None,
 ) -> None:
     """Convert multiple PDFs; return non-zero if any file fails."""
     if not inputs:
@@ -160,13 +208,15 @@ def batch(
         allow_signature_invalidation=allow_signature_invalidation,
         ghostscript=ghostscript,
         verapdf=verapdf,
+        max_input_mib=max_input_mib,
     )
+    password = _password(password_file)
     failures = 0
     for inp in inputs:
         source = Path(inp)
         output = source.with_stem(source.stem + suffix)
         try:
-            result = conv.convert(source, output, font_path=font)
+            result = conv.convert(source, output, font_path=font, password=password)
             status = "VERIFIED" if result.validation else "UNVERIFIED"
             click.echo(f"Converted {source} -> {output} [{result.backend}, {status}]")
         except Exception as exc:

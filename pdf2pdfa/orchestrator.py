@@ -3,7 +3,7 @@
 The orchestrator is deliberately conservative: it preserves already-valid
 files, uses pikepdf only for object-level repairs proven safe by preflight, and
 falls back to a full Ghostscript rewrite for features that require rendering or
-reconstruction.  When validation is requested, no candidate is published until
+reconstruction. When validation is requested, no candidate is published until
 veraPDF confirms the requested flavour.
 """
 
@@ -25,8 +25,8 @@ from .backends import (
 from .model import PreflightReport
 from .preflight import analyze_pdf
 from .profiles import get_policy
+from .security import decrypt_to_file, validate_input_file
 from .validator import ValidationResult, VeraPDFValidator
-
 
 BackendChoice = Literal["auto", "pikepdf", "ghostscript"]
 
@@ -48,6 +48,7 @@ class ConversionResult:
     validation: ValidationResult | None
     fallback_used: bool = False
     source_was_already_compliant: bool = False
+    source_was_encrypted: bool = False
 
 
 def _claim_matches(report: PreflightReport, level: str) -> bool:
@@ -59,8 +60,9 @@ def _claim_matches(report: PreflightReport, level: str) -> bool:
 
 
 def _requires_full_rewrite(report: PreflightReport) -> bool:
+    # Encryption is intentionally absent: it is safely removed in-process to a
+    # private temporary PDF before either backend sees the source.
     repair_codes = {
-        "encryption",
         "javascript",
         "embedded_files",
         "transparency",
@@ -85,12 +87,16 @@ class ConversionOrchestrator:
         ghostscript_executable: str | None = None,
         verapdf_executable: str = "verapdf",
         timeout: int = 300,
+        max_input_bytes: int | None = None,
     ) -> None:
         if backend not in ("auto", "pikepdf", "ghostscript"):
             raise ValueError("backend must be one of: auto, pikepdf, ghostscript")
+        if max_input_bytes is not None and max_input_bytes <= 0:
+            raise ValueError("max_input_bytes must be positive when provided")
         self.backend = backend
         self.validate_output = validate
         self.allow_signature_invalidation = allow_signature_invalidation
+        self.max_input_bytes = max_input_bytes
         self.fast = PikePDFBackend()
         self.full = GhostscriptBackend(ghostscript_executable, timeout=timeout)
         self.validator = VeraPDFValidator(verapdf_executable, timeout=timeout)
@@ -98,8 +104,7 @@ class ConversionOrchestrator:
     def _validate(self, candidate: Path, level: str) -> ValidationResult | None:
         if not self.validate_output:
             return None
-        result = self.validator.validate(candidate, level)
-        return result
+        return self.validator.validate(candidate, level)
 
     def convert(
         self,
@@ -109,22 +114,29 @@ class ConversionOrchestrator:
         level: str = "1b",
         icc_profile: str | Path | None = None,
         font_path: str | Path | None = None,
+        password: str | bytes | None = None,
     ) -> ConversionResult:
         policy = get_policy(level)
-        input_path = Path(input_path).resolve()
-        output_path = Path(output_path).resolve()
+        input_path = validate_input_file(input_path, max_bytes=self.max_input_bytes)
+        output_path = Path(output_path).expanduser().resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        report = analyze_pdf(input_path, policy.level)
+        report = analyze_pdf(
+            input_path,
+            policy.level,
+            password=password,
+            max_input_bytes=self.max_input_bytes,
+        )
+        encrypted = bool(report.features.get("encrypted"))
         if report.features.get("signed") and not self.allow_signature_invalidation:
             raise SignatureInvalidationError(
                 "Input contains a digital signature. Conversion would invalidate it; "
                 "set allow_signature_invalidation=True only if that is intentional."
             )
 
-        # A validated already-compliant PDF is the safest possible conversion:
-        # do not rewrite it at all.
-        if self.validate_output and _claim_matches(report, policy.level):
+        # A validated already-compliant, unencrypted PDF is the safest possible
+        # conversion: do not rewrite it at all.
+        if self.validate_output and not encrypted and _claim_matches(report, policy.level):
             existing = self.validator.validate(input_path, policy.level)
             if existing.compliant:
                 with tempfile.TemporaryDirectory(prefix="pdf2pdfa-", dir=output_path.parent) as tempdir:
@@ -138,6 +150,7 @@ class ConversionOrchestrator:
                     preflight=report,
                     validation=existing,
                     source_was_already_compliant=True,
+                    source_was_encrypted=False,
                 )
 
         rewrite_required = _requires_full_rewrite(report)
@@ -154,16 +167,26 @@ class ConversionOrchestrator:
             selected = self.full if rewrite_required else self.fast
 
         if not selected.available():
-            raise BackendUnavailableError(
-                f"Selected backend '{selected.name}' is unavailable"
-            )
+            raise BackendUnavailableError(f"Selected backend '{selected.name}' is unavailable")
 
         fallback_used = False
-        with tempfile.TemporaryDirectory(prefix="pdf2pdfa-", dir=output_path.parent) as tempdir:
-            candidate = Path(tempdir) / "candidate.pdf"
+        with tempfile.TemporaryDirectory(prefix="pdf2pdfa-", dir=output_path.parent) as tempdir_name:
+            tempdir = Path(tempdir_name)
+            backend_input = input_path
+            if encrypted:
+                # Password handling ends here. External backends only receive an
+                # unencrypted private working copy and never see the password in
+                # argv, environment variables or logs.
+                backend_input = decrypt_to_file(
+                    input_path,
+                    tempdir / "decrypted-input.pdf",
+                    password=password,
+                )
+
+            candidate = tempdir / "candidate.pdf"
             try:
                 selected.convert(
-                    input_path,
+                    backend_input,
                     candidate,
                     level=policy.level,
                     icc_profile=icc_profile,
@@ -175,7 +198,7 @@ class ConversionOrchestrator:
                 selected = self.full
                 fallback_used = True
                 selected.convert(
-                    input_path,
+                    backend_input,
                     candidate,
                     level=policy.level,
                     icc_profile=icc_profile,
@@ -189,7 +212,7 @@ class ConversionOrchestrator:
                     fallback_used = True
                     candidate.unlink(missing_ok=True)
                     selected.convert(
-                        input_path,
+                        backend_input,
                         candidate,
                         level=policy.level,
                         icc_profile=icc_profile,
@@ -197,9 +220,9 @@ class ConversionOrchestrator:
                     )
                     validation = self._validate(candidate, policy.level)
                 if validation is not None and not validation.compliant:
-                    failed = f"{validation.failed_checks} veraPDF check(s) failed"
                     raise ConversionError(
-                        f"Candidate is not compliant with PDF/A-{policy.level}: {failed}"
+                        f"Candidate is not compliant with PDF/A-{policy.level}: "
+                        f"{validation.failed_checks} veraPDF check(s) failed"
                     )
 
             if not candidate.is_file() or candidate.stat().st_size == 0:
@@ -213,4 +236,5 @@ class ConversionOrchestrator:
             preflight=report,
             validation=validation,
             fallback_used=fallback_used,
+            source_was_encrypted=encrypted,
         )

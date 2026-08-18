@@ -15,7 +15,7 @@ class Converter:
 
     ``backend='auto'`` preserves already-valid files, uses the conservative
     pikepdf fast path when preflight proves that safe, and falls back to
-    Ghostscript when a full rewrite is required.  ``validate=True`` makes
+    Ghostscript when a full rewrite is required. ``validate=True`` makes
     veraPDF conformance a publication gate.
     """
 
@@ -30,10 +30,12 @@ class Converter:
         ghostscript_executable: str | None = None,
         verapdf_executable: str = "verapdf",
         timeout: int = 300,
+        max_input_bytes: int | None = None,
     ) -> None:
         policy = get_policy(level)
         self.level = policy.level
         self.icc_path = icc_path or str(files(__package__).joinpath("data/sRGB.icc.b64"))
+        self.max_input_bytes = max_input_bytes
         self._orchestrator = ConversionOrchestrator(
             backend=backend,
             validate=validate,
@@ -41,11 +43,22 @@ class Converter:
             ghostscript_executable=ghostscript_executable,
             verapdf_executable=verapdf_executable,
             timeout=timeout,
+            max_input_bytes=max_input_bytes,
         )
 
-    def preflight(self, input_path: str | Path):
+    def preflight(
+        self,
+        input_path: str | Path,
+        *,
+        password: str | bytes | None = None,
+    ):
         """Return a non-mutating profile-aware preflight report."""
-        return analyze_pdf(input_path, self.level)
+        return analyze_pdf(
+            input_path,
+            self.level,
+            password=password,
+            max_input_bytes=self.max_input_bytes,
+        )
 
     def convert(
         self,
@@ -53,6 +66,8 @@ class Converter:
         output_path: str | Path,
         icc_profile: str | Path | None = None,
         font_path: str | Path | None = None,
+        *,
+        password: str | bytes | None = None,
     ) -> ConversionResult:
         """Convert *input_path* and atomically publish *output_path*."""
         return self._orchestrator.convert(
@@ -61,4 +76,5 @@ class Converter:
             level=self.level,
             icc_profile=icc_profile or self.icc_path,
             font_path=font_path,
+            password=password,
         )
