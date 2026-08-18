@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .objects import PDFDict, PDFName
+from .objects import PDFDict, PDFName, PDFStream
 from .page_render import RenderingError, _name, _resolve_resource
 from .pattern_render import UnsupportedPatternError
 from .structure import resolve
@@ -40,3 +40,14 @@ class UncoloredPatternSafetyMixin:
         if getattr(self, "_uncolored_pattern_depth", 0):
             return None
         return super()._masked_clip()
+
+    def _form(self, form: PDFStream) -> None:
+        if getattr(self, "_uncolored_pattern_depth", 0):
+            group = resolve(self.doc, form.get("Group")) if form.get("Group") is not None else None
+            if isinstance(group, PDFDict):
+                subtype = resolve(self.doc, group.get("S")) if group.get("S") is not None else None
+                if isinstance(subtype, PDFName) and subtype.value == "Transparency":
+                    raise UnsupportedPatternError(
+                        "PaintType 2 cell transparency groups require owned shape-group semantics"
+                    )
+        return super()._form(form)
