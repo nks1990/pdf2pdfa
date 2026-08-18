@@ -4,8 +4,6 @@ Type 3 glyphs are PDF content streams rather than external outline programs.
 This module resolves the font dictionary, code-to-glyph-name encoding, widths,
 FontMatrix, resources and CharProcs without delegating to a font library.
 
-The implementation is deliberately bounded.  It supports the common
-horizontal Type 3 case whose FontMatrix does not rotate/skew the advance vector.
 Non-ASCII named base encodings are accepted only when the code is explicitly
 covered by /Differences; guessing glyph names would make visual fidelity unsafe.
 """
@@ -30,6 +28,8 @@ class Type3GlyphItem:
     raw_code: bytes
     char_name: str
     width_1000: float
+    advance_x: float
+    advance_y: float
     word_space: bool = False
 
 
@@ -137,14 +137,9 @@ def _matrix(doc: PDFDocument, value: PDFObject | None) -> Matrix:
 
 def _base_encoding(name: str | None) -> dict[int, str]:
     if name is None:
-        # A dictionary without /BaseEncoding may still define every used code
-        # in /Differences.  ASCII defaults are intentionally not guessed here.
         return {}
     if name not in _SUPPORTED_BASE_ENCODINGS:
         raise Type3FontError(f"unsupported Type3 base encoding /{name}")
-    # The three supported named encodings share the normal ASCII glyph names.
-    # Extended codes intentionally require explicit /Differences until complete
-    # owned tables for each encoding are authored and tested.
     return dict(_ASCII_NAMES)
 
 
@@ -206,15 +201,11 @@ class Type3TextFont:
             raise Type3FontError("font resource is not /Subtype /Type3")
 
         self.font_matrix = _matrix(doc, self.font.get("FontMatrix"))
-        # Width-driven text advance is horizontal.  A FontMatrix that rotates or
-        # skews the advance requires a two-dimensional text-position update that
-        # the generic text-state code does not yet expose.
-        if abs(self.font_matrix.b) > 1e-12 or abs(self.font_matrix.c) > 1e-12:
-            raise Type3FontError(
-                "rotated/skewed Type3 FontMatrix requires two-dimensional owned text advance"
-            )
-        if abs(self.font_matrix.a) < 1e-15:
-            raise Type3FontError("Type3 FontMatrix has zero horizontal scale")
+        # Widths are horizontal character-space displacement vectors (w, 0).
+        # FontMatrix maps that vector into text space. A vector with a Y
+        # component is therefore valid and must advance the text matrix in 2D.
+        if abs(self.font_matrix.a) < 1e-15 and abs(self.font_matrix.b) < 1e-15:
+            raise Type3FontError("Type3 FontMatrix collapses the horizontal advance vector")
 
         self.encoding = _encoding(doc, self.font.get("Encoding"))
         self.char_procs = _dict(doc, self.font.get("CharProcs"), "Type3 /CharProcs")
@@ -262,14 +253,16 @@ class Type3TextFont:
                 width = 0.0
             else:
                 width = self.widths[code - self.first_char]
-            # Generic text-state code expects 1000-unit text widths.  Type 3
-            # widths are glyph-space displacements transformed by FontMatrix.
-            width_1000 = width * self.font_matrix.a * 1000.0
+
+            advance_x = width * self.font_matrix.a
+            advance_y = width * self.font_matrix.b
             result.append(
                 Type3GlyphItem(
                     raw_code=bytes([code]),
                     char_name=name,
-                    width_1000=width_1000,
+                    width_1000=advance_x * 1000.0,
+                    advance_x=advance_x,
+                    advance_y=advance_y,
                     word_space=code == 32,
                 )
             )
