@@ -13,12 +13,26 @@ import pdf2pdfa
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = ROOT / "pdf2pdfa"
 
+# These stdlib modules/APIs are intentionally excluded from runtime source even
+# though they are part of Python: using them would reopen an escape hatch to an
+# external executable/native library and defeat the owned-engine boundary.
+_FORBIDDEN_STDLIB_IMPORTS = {
+    "subprocess": "external process execution",
+    "ctypes": "foreign/native library loading",
+}
+_FORBIDDEN_OS_CALL_PREFIXES = ("exec", "spawn")
+_FORBIDDEN_OS_CALLS = {"system", "popen", "startfile"}
+
+
+def _trees():
+    for path in sorted(PACKAGE.rglob("*.py")):
+        yield path, ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
 
 def test_runtime_package_imports_only_stdlib_or_owned_modules():
     allowed = set(sys.stdlib_module_names) | {"pdf2pdfa", "__future__"}
     failures: list[str] = []
-    for path in sorted(PACKAGE.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for path, tree in _trees():
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -34,6 +48,35 @@ def test_runtime_package_imports_only_stdlib_or_owned_modules():
                         f"{path.relative_to(ROOT)}:{node.lineno}: from {node.module} import ..."
                     )
     assert not failures, "non-owned runtime imports:\n" + "\n".join(failures)
+
+
+def test_runtime_cannot_escape_to_external_process_or_native_library():
+    failures: list[str] = []
+    for path, tree in _trees():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root = alias.name.split(".", 1)[0]
+                    if root in _FORBIDDEN_STDLIB_IMPORTS:
+                        failures.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}: "
+                            f"{_FORBIDDEN_STDLIB_IMPORTS[root]} via import {alias.name}"
+                        )
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                root = node.module.split(".", 1)[0]
+                if root in _FORBIDDEN_STDLIB_IMPORTS:
+                    failures.append(
+                        f"{path.relative_to(ROOT)}:{node.lineno}: "
+                        f"{_FORBIDDEN_STDLIB_IMPORTS[root]} via from {node.module} import ..."
+                    )
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                if isinstance(node.func.value, ast.Name) and node.func.value.id == "os":
+                    name = node.func.attr
+                    if name in _FORBIDDEN_OS_CALLS or name.startswith(_FORBIDDEN_OS_CALL_PREFIXES):
+                        failures.append(
+                            f"{path.relative_to(ROOT)}:{node.lineno}: external process escape os.{name}(...)"
+                        )
+    assert not failures, "runtime ownership escape hatches:\n" + "\n".join(failures)
 
 
 def test_every_distributed_python_module_imports():
@@ -56,21 +99,3 @@ def test_pyproject_declares_zero_runtime_dependencies():
     match = re.search(r"(?m)^dependencies\s*=\s*\[(.*?)\]", text, re.S)
     assert match is not None, "pyproject.toml must declare dependencies explicitly"
     assert not match.group(1).strip(), "runtime dependencies must remain empty"
-
-
-def test_external_runtime_engines_are_absent_from_package_sources():
-    forbidden = {
-        "ghostscript": "external renderer/converter",
-        "verapdf": "external PDF/A validator",
-        "pikepdf": "third-party PDF engine",
-        "fonttools": "third-party font engine",
-        "from PIL": "third-party image engine",
-        "import click": "third-party CLI framework",
-    }
-    failures: list[str] = []
-    for path in sorted(PACKAGE.rglob("*.py")):
-        lowered = path.read_text(encoding="utf-8").lower()
-        for token, reason in forbidden.items():
-            if token.lower() in lowered:
-                failures.append(f"{path.relative_to(ROOT)}: {reason} token {token!r}")
-    assert not failures, "external runtime engine references:\n" + "\n".join(failures)
