@@ -23,6 +23,7 @@ class ICCProfileInfo:
     color_space: str
     components: int
     profile_class: str
+    tags: frozenset[str]
 
 
 _COMPONENTS = {
@@ -36,13 +37,14 @@ _COMPONENTS = {
 
 def _decode_profile_bytes(path: Path) -> bytes:
     data = path.read_bytes()
-    # Bundled assets are text/base64 so wheels remain easy to inspect.  A real
-    # binary ICC supplied by a user must pass through unchanged.
     try:
         text = data.decode("ascii").strip()
     except UnicodeDecodeError:
         return data
-    if text and all(ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r" for ch in text):
+    if text and all(
+        ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=\n\r"
+        for ch in text
+    ):
         try:
             decoded = base64.b64decode(text, validate=False)
             if len(decoded) >= 128:
@@ -50,6 +52,66 @@ def _decode_profile_bytes(path: Path) -> bytes:
         except Exception:
             pass
     return data
+
+
+def _parse_tag_table(data: bytes, path: Path) -> frozenset[str]:
+    if len(data) < 132:
+        raise InvalidICCProfileError(f"ICC profile has no tag table: {path}")
+    count = int.from_bytes(data[128:132], "big", signed=False)
+    if count > 4096:
+        raise InvalidICCProfileError(f"ICC profile has unreasonable tag count {count}: {path}")
+    table_end = 132 + count * 12
+    if table_end > len(data):
+        raise InvalidICCProfileError(f"ICC tag table exceeds profile length: {path}")
+
+    tags: set[str] = set()
+    for index in range(count):
+        pos = 132 + index * 12
+        signature_bytes = data[pos : pos + 4]
+        try:
+            signature = signature_bytes.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise InvalidICCProfileError(
+                f"ICC tag {index} has a non-ASCII signature: {path}"
+            ) from exc
+        offset = int.from_bytes(data[pos + 4 : pos + 8], "big", signed=False)
+        size = int.from_bytes(data[pos + 8 : pos + 12], "big", signed=False)
+        if size <= 0 or offset < 128 or offset + size > len(data):
+            raise InvalidICCProfileError(
+                f"ICC tag {signature!r} points outside profile data: {path}"
+            )
+        tags.add(signature)
+    return frozenset(tags)
+
+
+def _validate_device_mapping(
+    *,
+    color_space: str,
+    tags: frozenset[str],
+    path: Path,
+) -> None:
+    a2b = {"A2B0", "A2B1", "A2B2"}
+    if color_space == "CMYK" and not tags.intersection(a2b):
+        raise InvalidICCProfileError(
+            f"CMYK ICC profile lacks a device-to-PCS A2B mapping: {path}"
+        )
+    if color_space == "RGB ":
+        matrix_profile = {
+            "rXYZ",
+            "gXYZ",
+            "bXYZ",
+            "rTRC",
+            "gTRC",
+            "bTRC",
+        }.issubset(tags)
+        if not matrix_profile and not tags.intersection(a2b):
+            raise InvalidICCProfileError(
+                f"RGB ICC profile lacks matrix/TRC or A2B device mapping tags: {path}"
+            )
+    if color_space == "GRAY" and "kTRC" not in tags and not tags.intersection(a2b):
+        raise InvalidICCProfileError(
+            f"Gray ICC profile lacks kTRC or A2B device mapping tags: {path}"
+        )
 
 
 def read_icc_profile(icc_path: str | Path) -> ICCProfileInfo:
@@ -75,12 +137,20 @@ def read_icc_profile(icc_path: str | Path) -> ICCProfileInfo:
         raise InvalidICCProfileError(
             f"Unsupported ICC data color space {color_space!r}: {path}"
         )
+    if profile_class in {"link", "nmcl"}:
+        raise InvalidICCProfileError(
+            f"ICC profile class {profile_class!r} is not valid for an ICCBased/OutputIntent profile: {path}"
+        )
+
+    tags = _parse_tag_table(data, path)
+    _validate_device_mapping(color_space=color_space, tags=tags, path=path)
     return ICCProfileInfo(
         path=str(path),
         data=data,
         color_space=color_space,
         components=components,
         profile_class=profile_class,
+        tags=tags,
     )
 
 

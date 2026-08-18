@@ -5,7 +5,11 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import sys
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -25,8 +29,10 @@ def main() -> int:
     expected = [
         ROOT / "README.md",
         ROOT / "LICENSE",
+        ROOT / "CHANGELOG.md",
         ROOT / "SECURITY.md",
         ROOT / "CONTRIBUTING.md",
+        ROOT / "THIRD_PARTY_NOTICES.md",
         ROOT / "pdf2pdfa" / "data" / "sRGB.icc.b64",
         ROOT / "pdf2pdfa" / "data" / "CMYK.icc.b64",
         ROOT / "pdf2pdfa" / "py.typed",

@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,16 +7,16 @@ name = "pdf2pdfa"
 version = "4.0.0"
 description = "Profile-aware PDF to PDF/A conversion with preflight, adaptive backends, validation and fidelity checks"
 authors = [{name = "nks1990", email = "nks1990@users.noreply.github.com"}]
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["pdf", "pdfa", "archiving", "digital-preservation", "veraPDF", "ghostscript"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
@@ -41,12 +41,14 @@ test = [
     "lxml>=5.0",
     "Pillow>=10.0",
     "pytest>=8.0",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 dev = [
     "build>=1.2",
     "lxml>=5.0",
     "Pillow>=10.0",
     "pytest>=8.0",
+    "tomli>=2.0; python_version < '3.11'",
     "twine>=5.0",
 ]
 
