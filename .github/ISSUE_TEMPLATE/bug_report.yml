@@ -1,0 +1,108 @@
+name: Bug report
+description: Report a conversion, validation, fidelity, packaging, or CLI problem
+title: "[bug] "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not upload confidential PDFs, passwords, private keys, or signed production documents. Minimize or sanitize reproducer files before sharing them publicly.
+
+  - type: input
+    id: version
+    attributes:
+      label: pdf2pdfa version
+      placeholder: "4.0.0 or commit SHA"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: level
+    attributes:
+      label: Target PDF/A level
+      options:
+        - PDF/A-1b
+        - PDF/A-2b
+        - PDF/A-3b
+    validations:
+      required: true
+
+  - type: dropdown
+    id: backend
+    attributes:
+      label: Backend
+      options:
+        - auto
+        - pikepdf
+        - ghostscript
+        - unknown/not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Python, pikepdf, Ghostscript and veraPDF versions when relevant
+      placeholder: "Windows 11, Python 3.13, pikepdf ..., Ghostscript ..., veraPDF ..."
+    validations:
+      required: true
+
+  - type: input
+    id: producer
+    attributes:
+      label: Source PDF producer
+      description: Software that created the PDF, if known
+      placeholder: "Microsoft Word, AutoCAD, ReportLab, browser print, scanner..."
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Minimal command or Python reproducer
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Include the error and veraPDF failed rules if available. Remove secrets and private paths when needed.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Primary category
+      options:
+        - PDF/A conformance
+        - Visual/text fidelity
+        - Font handling
+        - Color/ICC handling
+        - Encryption/password handling
+        - Digital signature handling
+        - Attachments/annotations
+        - CLI/API behavior
+        - Packaging/install
+        - Performance/resource use
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I have removed secrets and confidential content from this report.
+          required: true
+        - label: I searched existing issues for the same problem.
+          required: true
