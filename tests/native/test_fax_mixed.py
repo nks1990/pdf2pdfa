@@ -16,7 +16,7 @@ EOL = "000000000001"
 
 
 def test_k2_mixed_first_1d_then_2d_reference_line():
-    # Row1 tag=1, H-like 1D coding -> white4 black4.
+    # Row1 tag=1, 1D coding -> white4 black4.
     # Row2 tag=0, identical reference via V0 at x4 then V0 at x8.
     encoded = _bits(
         f"{EOL} 1 1011 011 "
@@ -48,9 +48,9 @@ def test_k3_allows_two_2d_rows_after_one_reference_row():
 
 def test_mixed_new_1d_reference_resets_k_counter():
     encoded = _bits(
-        f"{EOL} 1 1011 011 "       # WW WW BBBB
+        f"{EOL} 1 1011 011 "       # white4 black4
         f"{EOL} 0 1 1 "             # same via 2D
-        f"{EOL} 1 1000 0010 "        # white3 black5
+        f"{EOL} 1 1000 0011 "        # white3 black5
         f"{EOL} 0 1 1"               # same new reference via 2D
     )
     assert decode_fax(
@@ -89,3 +89,24 @@ def test_mixed_tag_is_supported_even_when_eol_is_optional():
         k=2,
         end_of_line=False,
     ) == b"\xf0\xf0"
+
+
+def test_blackis1_is_normalized_at_materialization_boundary():
+    encoded = _bits(f"{EOL} 1 1011 011")
+    ordinary = decode_fax(
+        encoded,
+        columns=8,
+        rows=1,
+        k=2,
+        end_of_line=True,
+        black_is_1=False,
+    )
+    black_is_one = decode_fax(
+        encoded,
+        columns=8,
+        rows=1,
+        k=2,
+        end_of_line=True,
+        black_is_1=True,
+    )
+    assert ordinary == black_is_one == b"\xf0"
