@@ -5,16 +5,18 @@ patterns) route through this module so support cannot drift between contexts.
 
 Supported today:
 
+* ShadingType 1: two-dimensional function surface;
 * ShadingType 2/3: axial/radial evaluator;
 * ShadingType 4/5: Gouraud free-form/lattice mesh evaluator.
 
-Types 1, 6 and 7 remain explicit fail-closed paths until their owned geometry
-and interpolation rules are implemented.
+Types 6 and 7 remain explicit fail-closed paths until their owned Coons/tensor
+patch geometry and interpolation rules are implemented.
 """
 
 from __future__ import annotations
 
 from .document import PDFDocument
+from .function_shading import paint_function_shading
 from .mesh_shading import MeshShadingError, UnsupportedMeshShadingError
 from .mesh_shading45 import paint_mesh_shading45
 from .objects import PDFDict, PDFObject, PDFStream
@@ -76,6 +78,18 @@ def paint_owned_shading(
 ) -> None:
     """Paint one supported shading through the canonical owned implementation."""
     shading_type = _shading_type(doc, shading_value)
+    if shading_type == 1:
+        paint_function_shading(
+            doc,
+            shading_value,
+            resources=resources,
+            surface=surface,
+            ctm=ctm,
+            fill_alpha=fill_alpha,
+            blend_mode=blend_mode,
+            soft_mask=soft_mask,
+        )
+        return
     if shading_type in (2, 3):
         paint_shading(
             doc,
@@ -106,10 +120,6 @@ def paint_owned_shading(
         except MeshShadingError as exc:
             raise ShadingError(str(exc)) from exc
         return
-    if shading_type == 1:
-        raise UnsupportedShadingError(
-            "ShadingType 1 function-based shading requires the owned function-surface renderer"
-        )
     if shading_type in (6, 7):
         raise UnsupportedShadingError(
             f"ShadingType {shading_type} patch mesh requires the owned Coons/tensor patch renderer"
