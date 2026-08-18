@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from pdf2pdfa.orchestrator import _requires_full_rewrite
 from pdf2pdfa.preflight import analyze_pdf
 from tests.fixtures import (
     attachment_pdf,
+    device_cmyk_image_pdf,
     device_rgb_image_pdf,
+    direct_device_color_pdf,
     javascript_pdf,
     signature_pdf,
     transparency_pdf,
@@ -55,9 +58,26 @@ def test_type0_font_routes_away_from_unsafe_fast_embedding(tmp_path):
     assert report.features["type0_fonts"] == 1
     assert report.features["fonts_unembedded"] == 1
     assert "type0_fonts" in _codes(report)
+    assert _requires_full_rewrite(report) is True
 
 
-def test_device_rgb_image_is_counted(tmp_path):
+def test_device_rgb_image_is_counted_but_object_level_repairable(tmp_path):
     source = device_rgb_image_pdf(tmp_path / "device-rgb.pdf")
     report = analyze_pdf(source, "2b")
     assert report.features["device_color_spaces"]["/DeviceRGB"] >= 1
+    assert _requires_full_rewrite(report) is False
+
+
+def test_device_cmyk_routes_to_full_color_rewrite(tmp_path):
+    source = device_cmyk_image_pdf(tmp_path / "device-cmyk.pdf")
+    report = analyze_pdf(source, "2b")
+    assert report.features["device_color_spaces"]["/DeviceCMYK"] >= 1
+    assert _requires_full_rewrite(report) is True
+
+
+def test_direct_device_color_operator_routes_to_full_rewrite(tmp_path):
+    source = direct_device_color_pdf(tmp_path / "direct-rgb.pdf", "rg")
+    report = analyze_pdf(source, "2b")
+    assert report.features["direct_device_color_operators"]["/DeviceRGB"] >= 1
+    assert "direct_device_color" in _codes(report)
+    assert _requires_full_rewrite(report) is True
