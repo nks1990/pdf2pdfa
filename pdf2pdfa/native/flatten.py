@@ -3,12 +3,11 @@
 The flattener intentionally rasterizes only pages whose *used* painting
 instructions require transparency. It renders through the owned transparency
 renderer, embeds an opaque RGB image and replaces only that page's painting
-content. Page boxes and /Rotate are preserved.
+content. Page boxes, annotations and /Rotate are preserved.
 
-Annotation appearance streams are deliberately not flattened here. The repair
-planner rejects those cases until annotation appearance composition is owned as
-well; silently dropping or double-painting an annotation would be worse than a
-hard failure.
+Annotation appearance streams are deliberately not flattened here. A page is
+rejected if an annotation appearance depends on inherited page resources,
+because replacing those resources could silently alter the annotation.
 """
 
 from __future__ import annotations
@@ -21,7 +20,7 @@ from .document import PDFDocument
 from .filters import flate_encode
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .page_render import RenderingError, UnsupportedRenderingError
-from .structure import PageView, walk_pages
+from .structure import PageView, resolve, walk_pages
 from .transparency_render import TransparencyRenderer
 
 
@@ -70,6 +69,66 @@ def _unrotated(page: PageView) -> PageView:
         crop_box=page.crop_box,
         rotate=0,
     )
+
+
+def _resolved_dict(doc: PDFDocument, value: PDFObject | None) -> PDFDict | None:
+    try:
+        value = resolve(doc, value)
+    except Exception:
+        return None
+    return value if isinstance(value, PDFDict) else None
+
+
+def _resolved_stream(doc: PDFDocument, value: PDFObject | None) -> PDFStream | None:
+    try:
+        value = resolve(doc, value)
+    except Exception:
+        return None
+    return value if isinstance(value, PDFStream) else None
+
+
+def _appearance_streams(doc: PDFDocument, appearance: PDFDict) -> Iterable[PDFStream]:
+    for value in appearance.values():
+        stream = _resolved_stream(doc, value)
+        if stream is not None:
+            yield stream
+            continue
+        states = _resolved_dict(doc, value)
+        if states is None:
+            continue
+        for state_value in states.values():
+            stream = _resolved_stream(doc, state_value)
+            if stream is not None:
+                yield stream
+
+
+def _guard_annotation_resource_independence(doc: PDFDocument, page: PageView) -> None:
+    """Refuse flattening if an annotation AP would lose page-resource inheritance."""
+    try:
+        annots = resolve(doc, page.dictionary.get("Annots"))
+    except Exception as exc:
+        raise TransparencyFlattenError(
+            f"page {page.ref} annotation array cannot be resolved: {exc}"
+        ) from exc
+    if annots is None:
+        return
+    if not isinstance(annots, list):
+        raise TransparencyFlattenError(f"page {page.ref} /Annots is not an array")
+    for annot_index, annot_value in enumerate(annots, start=1):
+        annot = _resolved_dict(doc, annot_value)
+        if annot is None:
+            raise TransparencyFlattenError(
+                f"page {page.ref} annotation {annot_index} is not a dictionary"
+            )
+        appearance = _resolved_dict(doc, annot.get("AP"))
+        if appearance is None:
+            continue
+        for stream in _appearance_streams(doc, appearance):
+            if stream.get("Resources") is None:
+                raise TransparencyFlattenError(
+                    f"page {page.ref} annotation {annot_index} appearance inherits page resources; "
+                    "owned flattening refuses to detach them"
+                )
 
 
 def _image_stream(rgb: bytes, width: int, height: int) -> PDFStream:
@@ -139,6 +198,7 @@ def flatten_pages(
     flattened: list[FlattenedPage] = []
     for page_number in requested:
         page = pages[page_number - 1]
+        _guard_annotation_resource_independence(doc, page)
         try:
             rendered = TransparencyRenderer(doc, dpi=dpi).render_page(_unrotated(page))
         except (UnsupportedRenderingError, RenderingError, ValueError) as exc:
@@ -154,17 +214,21 @@ def flatten_pages(
             PDFStream(PDFDict(), _replacement_content(page, resource_name))
         )
 
-        # The old page resources are no longer needed by page painting. Making
-        # the replacement resources direct also prevents mutation of an
-        # inherited/shared resource dictionary used by sibling pages.
+        # Old page resources are intentionally detached from page painting so
+        # forbidden transparency resources do not remain reachable merely via
+        # an unused resource dictionary. Annotation AP streams must own their
+        # Resources (guarded above), so their rendering remains independent.
         page.dictionary["Resources"] = PDFDict(
             {"XObject": PDFDict({resource_name: image_ref})}
         )
         page.dictionary["Contents"] = content_ref
 
-        # A page-level transparency group is now obsolete because the new page
-        # painting content contains one opaque image only.
-        group = page.dictionary.get("Group")
+        # The replacement painting content is one opaque image. Any page-level
+        # transparency group is therefore obsolete, whether direct or indirect.
+        try:
+            group = resolve(doc, page.dictionary.get("Group"))
+        except Exception:
+            group = None
         if isinstance(group, PDFDict):
             subtype = group.get("S")
             if isinstance(subtype, PDFName) and subtype.value == "Transparency":
