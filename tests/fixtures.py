@@ -135,17 +135,47 @@ def type0_font_pdf(path: Path) -> Path:
     return path
 
 
-def device_rgb_image_pdf(path: Path) -> Path:
+def _device_image_pdf(path: Path, color_space: str, sample: bytes) -> Path:
     pdf = pikepdf.Pdf.new()
     page = pdf.add_blank_page(page_size=(200, 200))
-    image = pdf.make_stream(bytes([255, 0, 0]))
+    image = pdf.make_stream(sample)
     image["/Type"] = Name("/XObject")
     image["/Subtype"] = Name("/Image")
     image["/Width"] = 1
     image["/Height"] = 1
     image["/BitsPerComponent"] = 8
-    image["/ColorSpace"] = Name("/DeviceRGB")
+    image["/ColorSpace"] = Name(color_space)
     page.Resources["/XObject"] = Dictionary({"/Im0": image})
+    pdf.save(path)
+    pdf.close()
+    return path
+
+
+def device_rgb_image_pdf(path: Path) -> Path:
+    return _device_image_pdf(path, "/DeviceRGB", bytes([255, 0, 0]))
+
+
+def device_cmyk_image_pdf(path: Path) -> Path:
+    return _device_image_pdf(path, "/DeviceCMYK", bytes([0, 0, 0, 255]))
+
+
+def direct_device_color_pdf(path: Path, operator: str = "rg") -> Path:
+    """Create a page that selects a device color directly in its content stream."""
+    operands = {
+        "rg": "1 0 0",
+        "RG": "1 0 0",
+        "k": "0 1 0 0",
+        "K": "0 1 0 0",
+        "g": "0.5",
+        "G": "0.5",
+    }
+    if operator not in operands:
+        raise ValueError(operator)
+    pdf = pikepdf.Pdf.new()
+    page = pdf.add_blank_page(page_size=(200, 200))
+    page["/Contents"] = pdf.make_stream(
+        f"{operands[operator]} {operator}\n10 10 20 20 re f\n".encode("ascii")
+    )
     pdf.save(path)
     pdf.close()
     return path
