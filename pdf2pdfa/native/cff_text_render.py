@@ -1,8 +1,14 @@
-"""CFF-aware extension of the owned PDF text-state renderer."""
+"""CFF-aware extension of the owned PDF text-state renderer.
+
+The canonical renderer installs this class for all text, not just CFF. Besides
+adding original-program CFF painting, it fixes the historical TrueType text
+stroke call so render modes 1/2/5/6 use ``Surface.stroke_path(width=...)``.
+"""
 
 from __future__ import annotations
 
 from .cff_pdf_font import CFFGlyphItem, CFFPDFFontError, CFFPDFTextFont
+from .pdf_font import PDFTextFont
 from .raster import Matrix
 from .text_render import TextPaintStyle, TextRenderError, TrueTypeTextRenderer
 
@@ -60,7 +66,35 @@ class OwnedOutlineTextRenderer(TrueTypeTextRenderer):
             self.surface.stroke_path(
                 glyph_path,
                 style.stroke,
-                stroke_width=max(0.01, style.line_width * self.ctm.expansion),
+                width=max(0.01, style.line_width * self.ctm.expansion),
+                blend_mode=style.blend_mode,
+            )
+        if clip:
+            self._append_clip_path(glyph_path)
+
+    def _paint_true_type_glyph(self, glyph_id: int, style: TextPaintStyle) -> None:
+        """Canonical TrueType text paint with the correct raster stroke API."""
+        font = self._require_font()
+        if not isinstance(font, PDFTextFont):
+            raise TextRenderError("TrueType glyph requested for non-TrueType font")
+        transform = self._true_type_transform()
+        glyph_path = font.outlines.path(glyph_id, transform)
+        mode = self.state.render_mode
+        fill = mode in (0, 2, 4, 6)
+        stroke = mode in (1, 2, 5, 6)
+        clip = mode in (4, 5, 6, 7)
+        if fill:
+            self.surface.fill_path(
+                glyph_path,
+                style.fill,
+                even_odd=False,
+                blend_mode=style.blend_mode,
+            )
+        if stroke:
+            self.surface.stroke_path(
+                glyph_path,
+                style.stroke,
+                width=max(0.01, style.line_width * self.ctm.expansion),
                 blend_mode=style.blend_mode,
             )
         if clip:
