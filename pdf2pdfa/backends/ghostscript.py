@@ -1,6 +1,6 @@
 """Ghostscript pdfwrite backend for difficult PDF/A repairs.
 
-Ghostscript is an optional external executable.  It is deliberately not
+Ghostscript is an optional external executable. It is deliberately not
 bundled with pdf2pdfa; callers are responsible for installing and licensing it
 appropriately for their environment.
 """
@@ -38,7 +38,10 @@ class GhostscriptBackend:
         return None
 
     def available(self) -> bool:
-        return bool(self.executable and (shutil.which(self.executable) or Path(self.executable).is_file()))
+        return bool(
+            self.executable
+            and (shutil.which(self.executable) or Path(self.executable).is_file())
+        )
 
     @staticmethod
     def _definition(profile_path: Path, components: int, identifier: str) -> str:
@@ -88,19 +91,28 @@ class GhostscriptBackend:
             raise ConversionBackendError(
                 "Ghostscript PDF/A fallback currently requires an RGB or CMYK OutputIntent profile"
             )
+        if profile.components == 4 and not profile.tags.intersection(
+            {"B2A0", "B2A1", "B2A2"}
+        ):
+            raise ConversionBackendError(
+                "A CMYK Ghostscript OutputIntent must provide a B2A transform for conversion into the target CMYK space"
+            )
+
         color_strategy = "RGB" if profile.components == 3 else "CMYK"
         part = level[0]
         compatibility = "1.4" if part == "1" else "1.7"
 
         with tempfile.TemporaryDirectory(prefix="pdf2pdfa-gs-") as tempdir_name:
             tempdir = Path(tempdir_name)
-            # Ghostscript needs a real binary ICC file; bundled package assets
-            # are base64 text to make packaging deterministic.
             materialized_icc = tempdir / "output-intent.icc"
             materialized_icc.write_bytes(profile.data)
             definition = tempdir / "PDFA_def.ps"
             definition.write_text(
-                self._definition(materialized_icc, profile.components, source_profile.stem),
+                self._definition(
+                    materialized_icc,
+                    profile.components,
+                    source_profile.stem,
+                ),
                 encoding="ascii",
             )
             candidate = tempdir / "candidate.pdf"
@@ -138,9 +150,15 @@ class GhostscriptBackend:
                     f"Ghostscript timed out after {self.timeout}s"
                 ) from exc
             except OSError as exc:
-                raise BackendUnavailableError(f"Could not execute Ghostscript: {exc}") from exc
+                raise BackendUnavailableError(
+                    f"Could not execute Ghostscript: {exc}"
+                ) from exc
 
-            if completed.returncode != 0 or not candidate.is_file() or candidate.stat().st_size == 0:
+            if (
+                completed.returncode != 0
+                or not candidate.is_file()
+                or candidate.stat().st_size == 0
+            ):
                 diagnostic = completed.stderr.strip() or completed.stdout.strip()
                 raise ConversionBackendError(
                     f"Ghostscript PDF/A conversion failed (exit {completed.returncode}): {diagnostic[-4000:]}"
