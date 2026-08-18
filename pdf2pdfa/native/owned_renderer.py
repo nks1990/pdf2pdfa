@@ -1,8 +1,8 @@
 """Highest-capability owned page renderer composition.
 
-This is the renderer used by fidelity/flattening. It composes owned CCITT image
-decoding, Type 3 CharProc execution, transparency/soft-mask state and
-axial/radial shading painting in a single fail-closed interpreter.
+This is the renderer used by visual fidelity and PDF/A-1 flattening. Every
+renderer capability considered production-reachable must be composed here;
+component modules that are not in this MRO are not treated as shipped support.
 """
 
 from __future__ import annotations
@@ -12,17 +12,28 @@ from pathlib import Path as FSPath
 from .ccitt_render import CCITTImageRendererMixin
 from .document import PDFDocument
 from .page_render import RenderedPage
+from .pattern_dispatch import CanonicalPatternShadingMixin
+from .pattern_render import PatternShadingRendererMixin
 from .shading_render import ShadingRendererMixin
-from .transparency_render import TransparencyRenderer
 from .structure import walk_pages
+from .tiling_pattern import ColoredTilingPatternRendererMixin
+from .transparency_render import TransparencyRenderer
 
 
 class FullOwnedPageRenderer(
     CCITTImageRendererMixin,
+    ColoredTilingPatternRendererMixin,
+    CanonicalPatternShadingMixin,
+    PatternShadingRendererMixin,
     ShadingRendererMixin,
     TransparencyRenderer,
 ):
+    """Canonical renderer used by production conversion gates."""
+
     def _paint_type3_glyph(self, *args, **kwargs) -> None:
+        # Type3 CharProcs execute through the same dynamic dispatch chain. Save
+        # transparency state explicitly because a glyph-level ExtGState must
+        # never leak into following text/page painting.
         saved_soft = bytearray(self.soft_mask) if self.soft_mask is not None else None
         saved_soft_stack = [
             bytearray(item) if item is not None else None

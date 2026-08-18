@@ -5,7 +5,7 @@ import pytest
 from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
 from pdf2pdfa.native.owned_renderer import render_page_full
-from pdf2pdfa.native.page_render import UnsupportedRenderingError
+from pdf2pdfa.native.page_render import RenderingError
 
 
 def _function(c0, c1) -> PDFDict:
@@ -103,22 +103,21 @@ def test_axial_extend_true_and_bbox_are_both_respected():
         ),
         dpi=72,
     )
-    assert _bottom_pixel(page, 5).r > 0.99  # outside BBox remains white
-    assert _bottom_pixel(page, 15).r > 0.9  # start color extended
-    assert _bottom_pixel(page, 85).b > 0.9  # end color extended
-    assert _bottom_pixel(page, 95).r > 0.99  # outside BBox remains white
+    assert _bottom_pixel(page, 5).r > 0.99
+    assert _bottom_pixel(page, 15).r > 0.9
+    assert _bottom_pixel(page, 85).b > 0.9
+    assert _bottom_pixel(page, 95).r > 0.99
 
 
 def test_shading_respects_current_clip_path():
     content = b"0 0 50 20 re W n /Sh sh\n"
     page = render_page_full(_pdf(_axial(), content=content), dpi=72)
-    assert _bottom_pixel(page, 25).r < 0.9  # painted gradient
+    assert _bottom_pixel(page, 25).r < 0.9
     outside = _bottom_pixel(page, 75)
     assert outside.r > 0.99 and outside.g > 0.99 and outside.b > 0.99
 
 
 def test_shading_uses_current_ctm():
-    # Local shading axis is 0..50; x2 CTM makes it span the 100-point page.
     page = render_page_full(
         _pdf(_axial(coords=(0, 0, 50, 0)), content=b"2 0 0 1 0 0 cm /Sh sh\n"),
         dpi=72,
@@ -139,7 +138,6 @@ def test_shading_honors_fill_alpha_from_extgstate():
         dpi=72,
     )
     left = _bottom_pixel(page, 1)
-    # 50% red over white -> roughly (1, .5, .5)
     assert left.r > 0.98
     assert 0.45 < left.g < 0.6
     assert 0.45 < left.b < 0.6
@@ -184,7 +182,7 @@ def test_function_array_produces_one_component_per_function():
     assert right.g > right.r
 
 
-def test_mesh_shading_remains_fail_closed():
+def test_mesh_shading_must_be_a_stream():
     shading = PDFDict(
         {
             "ShadingType": 4,
@@ -195,5 +193,5 @@ def test_mesh_shading_remains_fail_closed():
             "Decode": [0, 1, 0, 1, 0, 1, 0, 1, 0, 1],
         }
     )
-    with pytest.raises(UnsupportedRenderingError, match="ShadingType 2/3"):
+    with pytest.raises(RenderingError, match="mesh shading shall be a stream"):
         render_page_full(_pdf(shading), dpi=72)
