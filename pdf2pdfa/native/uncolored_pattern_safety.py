@@ -30,3 +30,13 @@ class UncoloredPatternSafetyMixin:
                         "PaintType 2 cell soft masks require owned shape-only soft-mask semantics"
                     )
         return super()._instruction(instruction)
+
+    def _masked_clip(self):
+        # The caller's soft mask belongs to the final colorized pattern paint,
+        # not to the intermediate shape surface. Applying it here and again at
+        # final composition would square the mask alpha. Cell-local non-None
+        # soft masks are rejected above, so ignoring soft_mask during shape
+        # generation is unambiguous.
+        if getattr(self, "_uncolored_pattern_depth", 0):
+            return None
+        return super()._masked_clip()
