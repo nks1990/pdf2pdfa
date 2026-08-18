@@ -2,87 +2,293 @@
 
 from __future__ import annotations
 
+import json
 import logging
-import subprocess
-import shutil
-import sys
+import os
 from pathlib import Path
 
 import click
 
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+
+_LEVEL = click.Choice(["1b", "2b", "3b"], case_sensitive=False)
+_BACKEND = click.Choice(["auto", "pikepdf", "ghostscript"], case_sensitive=False)
+_FIDELITY = click.Choice(["off", "warn", "strict"], case_sensitive=False)
 
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable debug logging")
 def cli(verbose: bool) -> None:
-    """pdf2pdfa - Convert PDF to PDF/A (1b, 2b, 3b)."""
+    """Convert PDFs to PDF/A with preflight, adaptive backends and validation."""
     if verbose:
         logging.getLogger("pdf2pdfa").setLevel(logging.DEBUG)
         logging.getLogger().setLevel(logging.DEBUG)
 
 
-@cli.command()
-@click.argument("input", type=click.Path(exists=True))
-@click.argument("output", type=click.Path())
-@click.option("--icc", type=click.Path(), default=None, help="Path to ICC profile")
-@click.option("--font", type=click.Path(), default=None, help="Path to TrueType font")
-@click.option("--level", type=click.Choice(["1b", "2b", "3b"], case_sensitive=False), default="1b", help="PDF/A conformance level (default: 1b)")
-@click.option("--validate", is_flag=True, help="Run verapdf validation after conversion")
-def convert(input: str, output: str, icc: str, font: str, level: str, validate: bool) -> None:
-    """Convert INPUT PDF to PDF/A OUTPUT."""
+def _password(password_file: str | None) -> str | None:
+    from .security import read_password_file
+
+    if password_file:
+        return read_password_file(password_file)
+    return os.environ.get("PDF2PDFA_PASSWORD")
+
+
+def _max_bytes(max_input_mib: int | None) -> int | None:
+    return max_input_mib * 1024 * 1024 if max_input_mib is not None else None
+
+
+def _converter(
+    *,
+    level: str,
+    icc: str | None,
+    backend: str,
+    validate: bool,
+    fidelity: str,
+    allow_signature_invalidation: bool,
+    ghostscript: str | None,
+    verapdf: str,
+    max_input_mib: int | None,
+):
     from .converter import Converter
 
-    conv = Converter(icc_path=icc, level=level)
-    conv.convert(input, output, font_path=font)
-    click.echo(f"Converted {input} -> {output} (PDF/A-{level})")
-
-    if validate:
-        _run_verapdf(output)
-
-
-@cli.command()
-@click.argument("inputs", nargs=-1, type=click.Path(exists=True))
-@click.option("--suffix", default="_pdfa", help="Suffix for output files (default: _pdfa)")
-@click.option("--icc", type=click.Path(), default=None, help="Path to ICC profile")
-@click.option("--font", type=click.Path(), default=None, help="Path to TrueType font")
-@click.option("--level", type=click.Choice(["1b", "2b", "3b"], case_sensitive=False), default="1b", help="PDF/A conformance level (default: 1b)")
-@click.option("--validate", is_flag=True, help="Run verapdf validation after conversion")
-def batch(inputs: tuple, suffix: str, icc: str, font: str, level: str, validate: bool) -> None:
-    """Convert multiple PDFs to PDF/A."""
-    from .converter import Converter
-
-    if not inputs:
-        click.echo("No input files specified.", err=True)
-        sys.exit(1)
-
-    conv = Converter(icc_path=icc, level=level)
-    for inp in inputs:
-        p = Path(inp)
-        out = p.with_stem(p.stem + suffix)
-        try:
-            conv.convert(str(p), str(out), font_path=font)
-            click.echo(f"Converted {p} -> {out}")
-            if validate:
-                _run_verapdf(str(out))
-        except Exception as exc:
-            click.echo(f"FAILED {p}: {exc}", err=True)
+    return Converter(
+        icc_path=icc,
+        level=level,
+        backend=backend.lower(),
+        validate=validate,
+        fidelity=fidelity.lower(),
+        allow_signature_invalidation=allow_signature_invalidation,
+        ghostscript_executable=ghostscript,
+        verapdf_executable=verapdf,
+        max_input_bytes=_max_bytes(max_input_mib),
+    )
 
 
-def _run_verapdf(path: str) -> None:
-    """Run verapdf validation on a file."""
-    if shutil.which("verapdf") is None:
-        click.echo("verapdf not found, skipping validation", err=True)
+def _fidelity_label(result) -> str:
+    report = result.fidelity
+    if report is None:
+        return "FIDELITY-OFF"
+    if not report.available:
+        return "FIDELITY-UNAVAILABLE"
+    return "FIDELITY-PASS" if report.passed else "FIDELITY-WARN"
+
+
+@cli.command("preflight")
+@click.argument("input", type=click.Path(exists=True, dir_okay=False))
+@click.option("--level", type=_LEVEL, default="1b", show_default=True)
+@click.option("--json-output", is_flag=True, help="Emit machine-readable JSON")
+@click.option(
+    "--password-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD",
+)
+@click.option(
+    "--max-input-mib",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Reject inputs larger than this size",
+)
+def preflight_cmd(
+    input: str,
+    level: str,
+    json_output: bool,
+    password_file: str | None,
+    max_input_mib: int | None,
+) -> None:
+    """Inspect INPUT without modifying it."""
+    from .preflight import analyze_pdf
+
+    try:
+        report = analyze_pdf(
+            input,
+            level,
+            password=_password(password_file),
+            max_input_bytes=_max_bytes(max_input_mib),
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if json_output:
+        payload = {
+            "level": report.level,
+            "features": report.features,
+            "issues": [
+                {
+                    "code": issue.code,
+                    "severity": issue.severity.value,
+                    "message": issue.message,
+                    "repairable": issue.repairable,
+                    "context": issue.context,
+                }
+                for issue in report.issues
+            ],
+        }
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
-    cmd = ["verapdf", path]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode == 0:
-        click.echo(f"  verapdf: PASS")
-    else:
-        click.echo(f"  verapdf: FAIL", err=True)
-        if result.stdout:
-            click.echo(result.stdout)
+
+    click.echo(f"PDF/A-{report.level} preflight: {input}")
+    if not report.issues:
+        click.echo("  no conversion blockers detected")
+    for issue in report.issues:
+        click.echo(f"  {issue.severity.value.upper():7} {issue.code}: {issue.message}")
+
+
+@cli.command()
+@click.argument("input", type=click.Path(exists=True, dir_okay=False))
+@click.argument("output", type=click.Path(dir_okay=False))
+@click.option("--icc", type=click.Path(dir_okay=False), default=None, help="OutputIntent ICC profile")
+@click.option(
+    "--font",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Explicit font override for safe simple-font embedding",
+)
+@click.option("--level", type=_LEVEL, default="1b", show_default=True, help="PDF/A conformance level")
+@click.option("--backend", type=_BACKEND, default="auto", show_default=True)
+@click.option("--validate", is_flag=True, help="Require veraPDF compliance before publishing OUTPUT")
+@click.option(
+    "--fidelity",
+    type=_FIDELITY,
+    default="off",
+    show_default=True,
+    help="Visual comparison: warn reports drift; strict blocks publication",
+)
+@click.option(
+    "--allow-signature-invalidation",
+    is_flag=True,
+    help="Explicitly allow conversion of signed PDFs",
+)
+@click.option(
+    "--ghostscript",
+    type=click.Path(dir_okay=False),
+    default=None,
+    help="Ghostscript executable override",
+)
+@click.option("--verapdf", default="verapdf", show_default=True, help="veraPDF executable")
+@click.option(
+    "--password-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Read PDF password from a file; alternatively set PDF2PDFA_PASSWORD",
+)
+@click.option(
+    "--max-input-mib",
+    type=click.IntRange(min=1),
+    default=None,
+    help="Reject inputs larger than this size",
+)
+def convert(
+    input: str,
+    output: str,
+    icc: str | None,
+    font: str | None,
+    level: str,
+    backend: str,
+    validate: bool,
+    fidelity: str,
+    allow_signature_invalidation: bool,
+    ghostscript: str | None,
+    verapdf: str,
+    password_file: str | None,
+    max_input_mib: int | None,
+) -> None:
+    """Convert INPUT PDF to PDF/A OUTPUT."""
+    conv = _converter(
+        level=level,
+        icc=icc,
+        backend=backend,
+        validate=validate,
+        fidelity=fidelity,
+        allow_signature_invalidation=allow_signature_invalidation,
+        ghostscript=ghostscript,
+        verapdf=verapdf,
+        max_input_mib=max_input_mib,
+    )
+    try:
+        result = conv.convert(
+            input,
+            output,
+            font_path=font,
+            password=_password(password_file),
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    status = "VERIFIED" if result.validation is not None else "UNVERIFIED"
+    fallback = ", fallback" if result.fallback_used else ""
+    encrypted = ", decrypted" if result.source_was_encrypted else ""
+    click.echo(
+        f"Converted {input} -> {output} "
+        f"(PDF/A-{result.level}, {result.backend}{fallback}{encrypted}, "
+        f"{status}, {_fidelity_label(result)})"
+    )
+
+
+@cli.command()
+@click.argument("inputs", nargs=-1, type=click.Path(exists=True, dir_okay=False))
+@click.option("--suffix", default="_pdfa", show_default=True, help="Suffix for output files")
+@click.option("--icc", type=click.Path(dir_okay=False), default=None, help="OutputIntent ICC profile")
+@click.option("--font", type=click.Path(dir_okay=False), default=None)
+@click.option("--level", type=_LEVEL, default="1b", show_default=True)
+@click.option("--backend", type=_BACKEND, default="auto", show_default=True)
+@click.option("--validate", is_flag=True, help="Require veraPDF compliance for every output")
+@click.option("--fidelity", type=_FIDELITY, default="off", show_default=True)
+@click.option("--allow-signature-invalidation", is_flag=True)
+@click.option("--ghostscript", type=click.Path(dir_okay=False), default=None)
+@click.option("--verapdf", default="verapdf", show_default=True)
+@click.option(
+    "--password-file",
+    type=click.Path(exists=True, dir_okay=False),
+    help="Password shared by encrypted batch inputs; alternatively set PDF2PDFA_PASSWORD",
+)
+@click.option("--max-input-mib", type=click.IntRange(min=1), default=None)
+def batch(
+    inputs: tuple[str, ...],
+    suffix: str,
+    icc: str | None,
+    font: str | None,
+    level: str,
+    backend: str,
+    validate: bool,
+    fidelity: str,
+    allow_signature_invalidation: bool,
+    ghostscript: str | None,
+    verapdf: str,
+    password_file: str | None,
+    max_input_mib: int | None,
+) -> None:
+    """Convert multiple PDFs; return non-zero if any file fails."""
+    if not inputs:
+        raise click.UsageError("No input files specified.")
+
+    conv = _converter(
+        level=level,
+        icc=icc,
+        backend=backend,
+        validate=validate,
+        fidelity=fidelity,
+        allow_signature_invalidation=allow_signature_invalidation,
+        ghostscript=ghostscript,
+        verapdf=verapdf,
+        max_input_mib=max_input_mib,
+    )
+    password = _password(password_file)
+    failures = 0
+    for inp in inputs:
+        source = Path(inp)
+        output = source.with_stem(source.stem + suffix)
+        try:
+            result = conv.convert(source, output, font_path=font, password=password)
+            status = "VERIFIED" if result.validation else "UNVERIFIED"
+            click.echo(
+                f"Converted {source} -> {output} "
+                f"[{result.backend}, {status}, {_fidelity_label(result)}]"
+            )
+        except Exception as exc:
+            failures += 1
+            click.echo(f"FAILED {source}: {exc}", err=True)
+
+    if failures:
+        raise click.ClickException(f"{failures} conversion(s) failed")
 
 
 if __name__ == "__main__":
