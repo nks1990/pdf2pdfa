@@ -73,8 +73,6 @@ class PikePDFBackend:
                     md["pdf:Keywords"] = keywords
                 if not md.get("xmp:CreatorTool"):
                     md["xmp:CreatorTool"] = "pdf2pdfa"
-                # Preserve the original creation timestamp. Conversion is a
-                # modification, not the creation of the source document.
                 md["xmp:ModifyDate"] = now
                 md["xmp:MetadataDate"] = now
                 md["pdf:Producer"] = f"pikepdf {pikepdf.__version__} (pdf2pdfa)"
@@ -86,11 +84,11 @@ class PikePDFBackend:
             if level.startswith("1"):
                 save_kwargs["object_stream_mode"] = ObjectStreamMode.disable
 
-            try:
-                pdf.save(str(output_path), **save_kwargs)
-            except TypeError:
-                # Compatibility with the oldest supported pikepdf releases.
-                pdf.save(str(output_path), encryption=False)
+            # The package requires pikepdf >= 8.15, where these save controls
+            # are part of the supported API. Do not silently retry without
+            # force_version/object-stream controls: that could turn a backend
+            # compatibility error into an invalid PDF/A-1 candidate.
+            pdf.save(str(output_path), **save_kwargs)
         except Exception as exc:
             if isinstance(exc, ConversionBackendError):
                 raise
