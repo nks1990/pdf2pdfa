@@ -1,71 +1,69 @@
-"""Tests for color space sanitization."""
-from pathlib import Path
+"""Tests for conservative color-space normalization."""
+
+from __future__ import annotations
 
 import pikepdf
-from pikepdf import Pdf, Name, Dictionary, Array, Stream
-from pdf2pdfa.colorspace import sanitize_color_spaces
+from pikepdf import Array, Dictionary, Name, Pdf
+import pytest
 
-DATA_DIR = Path(__file__).parent / 'data'
+from pdf2pdfa.colorspace import (
+    FullColorRewriteRequired,
+    normalize_resource_color_spaces,
+    sanitize_color_spaces,
+)
 
 
-def test_device_rgb_replaced_in_xobject(tmp_path):
-    """Verify DeviceRGB on image XObjects is replaced with ICCBased."""
-    # Create a minimal PDF with a DeviceRGB image XObject
+def _image(pdf: Pdf, color_space: str, sample: bytes):
+    image = pdf.make_stream(sample)
+    image["/Type"] = Name("/XObject")
+    image["/Subtype"] = Name("/Image")
+    image["/Width"] = 1
+    image["/Height"] = 1
+    image["/BitsPerComponent"] = 8
+    image["/ColorSpace"] = Name(color_space)
+    return image
+
+
+def test_device_rgb_replaced_in_xobject():
     pdf = Pdf.new()
     page = pdf.add_blank_page(page_size=(200, 200))
-
-    # Create a tiny 1x1 RGB image
-    img_data = bytes([255, 0, 0])  # red pixel
-    img_stream = pdf.make_stream(img_data)
-    img_stream.stream_dict['/Type'] = Name('/XObject')
-    img_stream.stream_dict['/Subtype'] = Name('/Image')
-    img_stream.stream_dict['/Width'] = 1
-    img_stream.stream_dict['/Height'] = 1
-    img_stream.stream_dict['/BitsPerComponent'] = 8
-    img_stream.stream_dict['/ColorSpace'] = Name('/DeviceRGB')
-
-    if '/Resources' not in page:
-        page['/Resources'] = Dictionary()
-    page.Resources['/XObject'] = Dictionary({'/Im0': img_stream})
-
-    # Create a fake RGB ICC stream
-    rgb_icc = pdf.make_stream(b'\x00' * 128)
-    rgb_icc.stream_dict['/N'] = 3
+    page.Resources["/XObject"] = Dictionary(
+        {"/Im0": _image(pdf, "/DeviceRGB", bytes([255, 0, 0]))}
+    )
+    rgb_icc = pdf.make_stream(b"\x00" * 128)
+    rgb_icc["/N"] = 3
 
     sanitize_color_spaces(pdf, rgb_icc)
 
-    # Check that DeviceRGB was replaced
-    cs = page.Resources['/XObject']['/Im0']['/ColorSpace']
-    assert isinstance(cs, Array)
-    assert cs[0] == Name('/ICCBased')
+    color_space = page.Resources["/XObject"]["/Im0"]["/ColorSpace"]
+    assert isinstance(color_space, Array)
+    assert color_space[0] == Name("/ICCBased")
+    assert int(color_space[1]["/N"]) == 3
 
 
-def test_device_cmyk_replaced_in_xobject(tmp_path):
-    """Verify DeviceCMYK on image XObjects is replaced with ICCBased."""
+def test_device_cmyk_requires_full_rewrite_without_source_profile():
     pdf = Pdf.new()
     page = pdf.add_blank_page(page_size=(200, 200))
+    page.Resources["/XObject"] = Dictionary(
+        {"/Im0": _image(pdf, "/DeviceCMYK", bytes([0, 0, 0, 255]))}
+    )
 
-    img_data = bytes([0, 0, 0, 255])  # CMYK pixel
-    img_stream = pdf.make_stream(img_data)
-    img_stream.stream_dict['/Type'] = Name('/XObject')
-    img_stream.stream_dict['/Subtype'] = Name('/Image')
-    img_stream.stream_dict['/Width'] = 1
-    img_stream.stream_dict['/Height'] = 1
-    img_stream.stream_dict['/BitsPerComponent'] = 8
-    img_stream.stream_dict['/ColorSpace'] = Name('/DeviceCMYK')
+    with pytest.raises(FullColorRewriteRequired, match="DeviceCMYK"):
+        normalize_resource_color_spaces(pdf)
 
-    if '/Resources' not in page:
-        page['/Resources'] = Dictionary()
-    page.Resources['/XObject'] = Dictionary({'/Im0': img_stream})
 
-    rgb_icc = pdf.make_stream(b'\x00' * 128)
-    rgb_icc.stream_dict['/N'] = 3
+def test_explicit_cmyk_profile_can_be_assigned_when_intentional():
+    pdf = Pdf.new()
+    page = pdf.add_blank_page(page_size=(200, 200))
+    page.Resources["/XObject"] = Dictionary(
+        {"/Im0": _image(pdf, "/DeviceCMYK", bytes([0, 0, 0, 255]))}
+    )
+    cmyk_icc = pdf.make_stream(b"fixture-profile")
+    cmyk_icc["/N"] = 4
 
-    sanitize_color_spaces(pdf, rgb_icc)
+    normalize_resource_color_spaces(pdf, cmyk_icc_stream=cmyk_icc)
 
-    cs = page.Resources['/XObject']['/Im0']['/ColorSpace']
-    assert isinstance(cs, Array)
-    assert cs[0] == Name('/ICCBased')
-    # CMYK stream should have N=4
-    icc_stream = cs[1]
-    assert int(icc_stream.stream_dict['/N']) == 4
+    color_space = page.Resources["/XObject"]["/Im0"]["/ColorSpace"]
+    assert isinstance(color_space, Array)
+    assert color_space[0] == Name("/ICCBased")
+    assert int(color_space[1]["/N"]) == 4
