@@ -12,11 +12,19 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import pikepdf
-from pikepdf import Pdf
 
 from .model import PreflightReport, Severity
 from .profiles import get_policy
 from .security import open_pdf, validate_input_file
+
+_DIRECT_COLOR_OPERATORS = {
+    "g": "/DeviceGray",
+    "G": "/DeviceGray",
+    "rg": "/DeviceRGB",
+    "RG": "/DeviceRGB",
+    "k": "/DeviceCMYK",
+    "K": "/DeviceCMYK",
+}
 
 
 def _name(value: Any) -> str:
@@ -51,15 +59,54 @@ def _has_javascript_action(obj: Any) -> bool:
     return False
 
 
-def _scan_resources(resources: Any, state: dict[str, Any], seen: set[tuple[int, int]]) -> None:
+def _scan_content_stream(
+    page_or_stream: Any,
+    state: dict[str, Any],
+    seen_streams: set[tuple[int, int]],
+) -> None:
+    try:
+        obj = getattr(page_or_stream, "obj", page_or_stream)
+        objgen = getattr(obj, "objgen", (0, 0))
+        if objgen != (0, 0):
+            if objgen in seen_streams:
+                return
+            seen_streams.add(objgen)
+    except Exception:
+        pass
+
+    try:
+        instructions = pikepdf.parse_content_stream(
+            page_or_stream,
+            operators="g G rg RG k K",
+        )
+    except Exception:
+        state["content_parse_failures"] += 1
+        return
+
+    for instruction in instructions:
+        try:
+            _, operator = instruction
+        except Exception:
+            continue
+        color_space = _DIRECT_COLOR_OPERATORS.get(str(operator))
+        if color_space:
+            state["direct_device_color_operators"][color_space] += 1
+
+
+def _scan_resources(
+    resources: Any,
+    state: dict[str, Any],
+    seen_resources: set[tuple[int, int]],
+    seen_streams: set[tuple[int, int]],
+) -> None:
     if resources is None:
         return
     try:
         objgen = resources.objgen
         if objgen != (0, 0):
-            if objgen in seen:
+            if objgen in seen_resources:
                 return
-            seen.add(objgen)
+            seen_resources.add(objgen)
     except Exception:
         pass
 
@@ -71,7 +118,7 @@ def _scan_resources(resources: Any, state: dict[str, Any], seen: set[tuple[int, 
             descriptor = font.get("/FontDescriptor")
             embedded = bool(
                 descriptor
-                and any(k in descriptor for k in ("/FontFile", "/FontFile2", "/FontFile3"))
+                and any(key in descriptor for key in ("/FontFile", "/FontFile2", "/FontFile3"))
             )
             if subtype == "/Type0":
                 descendants = font.get("/DescendantFonts") or []
@@ -81,8 +128,8 @@ def _scan_resources(resources: Any, state: dict[str, Any], seen: set[tuple[int, 
                     embedded = bool(
                         descendant_descriptor
                         and any(
-                            k in descendant_descriptor
-                            for k in ("/FontFile", "/FontFile2", "/FontFile3")
+                            key in descendant_descriptor
+                            for key in ("/FontFile", "/FontFile2", "/FontFile3")
                         )
                     )
             state["fonts_total"] += 1
@@ -131,7 +178,42 @@ def _scan_resources(resources: Any, state: dict[str, Any], seen: set[tuple[int, 
             if group and _name(group.get("/S")) == "/Transparency":
                 state["transparency"] = True
             if subtype == "/Form":
-                _scan_resources(xobject.get("/Resources"), state, seen)
+                _scan_content_stream(xobject, state, seen_streams)
+                _scan_resources(
+                    xobject.get("/Resources"),
+                    state,
+                    seen_resources,
+                    seen_streams,
+                )
+
+
+def _scan_appearance(
+    appearance: Any,
+    state: dict[str, Any],
+    seen_resources: set[tuple[int, int]],
+    seen_streams: set[tuple[int, int]],
+) -> None:
+    if appearance is None:
+        return
+    try:
+        subtype = _name(appearance.get("/Subtype"))
+    except Exception:
+        return
+    if subtype == "/Form":
+        _scan_content_stream(appearance, state, seen_streams)
+        _scan_resources(
+            appearance.get("/Resources"),
+            state,
+            seen_resources,
+            seen_streams,
+        )
+        return
+    try:
+        values = appearance.values()
+    except Exception:
+        return
+    for value in values:
+        _scan_appearance(value, state, seen_resources, seen_streams)
 
 
 def analyze_pdf(
@@ -158,6 +240,8 @@ def analyze_pdf(
         "font_names": set(),
         "device_color_spaces": Counter(),
         "color_space_families": Counter(),
+        "direct_device_color_operators": Counter(),
+        "content_parse_failures": 0,
         "transparency": False,
     }
 
@@ -181,9 +265,16 @@ def analyze_pdf(
                     break
 
         annotations = 0
-        seen: set[tuple[int, int]] = set()
+        seen_resources: set[tuple[int, int]] = set()
+        seen_streams: set[tuple[int, int]] = set()
         for page in pdf.pages:
-            _scan_resources(page.get("/Resources"), state, seen)
+            _scan_content_stream(page, state, seen_streams)
+            _scan_resources(
+                page.get("/Resources"),
+                state,
+                seen_resources,
+                seen_streams,
+            )
             if _has_javascript_action(page):
                 javascript = True
             annots = page.get("/Annots") or []
@@ -194,8 +285,7 @@ def analyze_pdf(
                 appearance = annot.get("/AP")
                 if appearance:
                     for value in appearance.values():
-                        if hasattr(value, "get"):
-                            _scan_resources(value.get("/Resources"), state, seen)
+                        _scan_appearance(value, state, seen_resources, seen_streams)
 
         existing_claim: dict[str, str] = {}
         try:
@@ -222,6 +312,8 @@ def analyze_pdf(
             "font_names": sorted(state["font_names"]),
             "device_color_spaces": dict(state["device_color_spaces"]),
             "color_space_families": dict(state["color_space_families"]),
+            "direct_device_color_operators": dict(state["direct_device_color_operators"]),
+            "content_parse_failures": state["content_parse_failures"],
             "has_output_intent": bool(root.get("/OutputIntents")),
             "existing_pdfa_claim": existing_claim,
             "input_bytes": source.stat().st_size,
@@ -267,6 +359,22 @@ def analyze_pdf(
             Severity.WARNING,
             repairable=True,
             count=state["type0_fonts"],
+        )
+    if state["direct_device_color_operators"]:
+        report.add(
+            "direct_device_color",
+            "Device color operators are present directly in content streams and require a full color-managed rewrite.",
+            Severity.WARNING,
+            repairable=True,
+            operators=dict(state["direct_device_color_operators"]),
+        )
+    if state["content_parse_failures"]:
+        report.add(
+            "content_stream_parse",
+            "One or more content streams could not be parsed safely during preflight.",
+            Severity.WARNING,
+            repairable=True,
+            count=state["content_parse_failures"],
         )
 
     return report
