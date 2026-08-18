@@ -4,8 +4,6 @@ import pytest
 
 from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.document import PDFDocument
-from pdf2pdfa.native.image import UnsupportedImageError
-from pdf2pdfa.native.image_ccitt import decode_image_owned
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
 from pdf2pdfa.native.owned_renderer import render_page_full
 from pdf2pdfa.native.page_render import UnsupportedRenderingError
@@ -15,6 +13,9 @@ def _bits(value: str) -> bytes:
     clean = "".join(value.split())
     clean += "0" * ((-len(clean)) % 8)
     return bytes(int(clean[i : i + 8], 2) for i in range(0, len(clean), 8))
+
+
+EOL = "000000000001"
 
 
 def _image(
@@ -90,7 +91,6 @@ def _bottom_pixel(page, x: int, y: int = 5):
 
 
 def test_group3_ccitt_xobject_renders_white_then_black():
-    # white4 + black4
     page = render_page_full(
         _document_with_image(_image(_bits("1011 011"))),
         dpi=72,
@@ -114,21 +114,19 @@ def test_black_is_1_does_not_invert_visual_result_after_filter_materialization()
 
 
 def test_rows_zero_uses_image_height():
-    # two all-white rows; Rows=0 is explicit and Image Height is authoritative.
     encoded = _bits("10011 10011")
     data = _document_with_image(
         _image(encoded, height=2, rows=0),
         page_height=20,
     )
     doc = PDFDocument.open(data, repair=False)
-    # Render is sufficient to prove the adapter accepted Rows=0/Height=2.
     page = render_page_full(doc, dpi=72)
     assert page.width == 80 and page.height == 20
     assert all(value == 255 for value in page.rgb_bytes())
 
 
 def test_optional_eol_is_accepted_when_end_of_line_is_false():
-    encoded = _bits("000000000001 1011 011")
+    encoded = _bits(f"{EOL} 1011 011")
     page = render_page_full(
         _document_with_image(_image(encoded, end_of_line=False)),
         dpi=72,
@@ -146,7 +144,6 @@ def test_required_eol_missing_is_rejected():
 
 
 def test_group4_ccitt_xobject_renders_reference_rows():
-    # Row1 = all black: H + white0 + black8. Row2 identical: V0, V0.
     encoded = _bits("001 00110101 000101 1 1")
     page = render_page_full(
         _document_with_image(_image(encoded, height=2, rows=2, k=-1), page_height=20),
@@ -156,15 +153,40 @@ def test_group4_ccitt_xobject_renders_reference_rows():
     assert _bottom_pixel(page, 10, 15).r < 0.02
 
 
-def test_columns_width_mismatch_is_fail_closed():
-    data = _document_with_image(_image(_bits("10011"), columns=9))
-    with pytest.raises(UnsupportedRenderingError, match="Columns 9.*Width 8"):
+def test_mixed_group3_k2_renders_1d_reference_then_2d_row():
+    encoded = _bits(
+        f"{EOL} 1 1011 011 "
+        f"{EOL} 0 1 1"
+    )
+    page = render_page_full(
+        _document_with_image(
+            _image(encoded, height=2, rows=2, k=2, end_of_line=True),
+            page_height=20,
+        ),
+        dpi=72,
+    )
+    for y in (5, 15):
+        assert _bottom_pixel(page, 10, y).r > 0.98
+        assert _bottom_pixel(page, 70, y).r < 0.02
+
+
+def test_mixed_group3_k_cadence_violation_is_fail_closed_at_renderer():
+    encoded = _bits(
+        f"{EOL} 1 1011 011 "
+        f"{EOL} 0 1 1 "
+        f"{EOL} 0 1 1"
+    )
+    data = _document_with_image(
+        _image(encoded, height=3, rows=3, k=2, end_of_line=True),
+        page_height=30,
+    )
+    with pytest.raises(UnsupportedRenderingError, match="exceeds K=2"):
         render_page_full(data, dpi=72)
 
 
-def test_mixed_group3_k_positive_remains_fail_closed_at_renderer():
-    data = _document_with_image(_image(b"\x00", k=1))
-    with pytest.raises(UnsupportedRenderingError, match="K > 0"):
+def test_columns_width_mismatch_is_fail_closed():
+    data = _document_with_image(_image(_bits("10011"), columns=9))
+    with pytest.raises(UnsupportedRenderingError, match="Columns 9.*Width 8"):
         render_page_full(data, dpi=72)
 
 
@@ -184,8 +206,6 @@ def test_decode_image_adapter_preserves_regular_non_ccitt_path():
     )
     data = _document_with_image(raw, page_width=10, page_height=10)
     doc = PDFDocument.open(data, repair=False)
-    # Locate through the renderer path; this proves the mixin did not make CCITT
-    # mandatory for ordinary images.
     page = render_page_full(doc, dpi=72)
     pixel = _bottom_pixel(page, 5, 5)
     assert pixel.r > 0.98 and pixel.g < 0.02 and pixel.b < 0.02
