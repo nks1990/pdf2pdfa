@@ -32,6 +32,7 @@ def main() -> int:
         ROOT / "CHANGELOG.md",
         ROOT / "SECURITY.md",
         ROOT / "CONTRIBUTING.md",
+        ROOT / "THIRD_PARTY_NOTICES.md",
         ROOT / "pdf2pdfa" / "data" / "sRGB.icc.b64",
         ROOT / "pdf2pdfa" / "data" / "CMYK.icc.b64",
         ROOT / "pdf2pdfa" / "py.typed",
