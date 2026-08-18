@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from .content import ContentInstruction
+from .objects import PDFDict, PDFStream
 from .page_render import RenderingError, UnsupportedRenderingError, _name, _resolve_resource
 from .shading import ShadingError, UnsupportedShadingError, paint_shading
+from .structure import resolve
 
 
 class ShadingRendererMixin:
@@ -25,6 +27,14 @@ class ShadingRendererMixin:
             raise RenderingError("sh expects exactly one shading resource name")
         name = _name(args[0], "sh")
         shading = _resolve_resource(self.doc, self.resources, "Shading", name)  # type: ignore[attr-defined]
+        resolved = resolve(self.doc, shading)  # type: ignore[attr-defined]
+        dictionary = resolved.dictionary if isinstance(resolved, PDFStream) else resolved
+        if not isinstance(dictionary, PDFDict):
+            raise RenderingError("Shading resource is not a dictionary/stream")
+        raw_type = resolve(self.doc, dictionary.get("ShadingType"))  # type: ignore[attr-defined]
+        if isinstance(raw_type, bool) or not isinstance(raw_type, int):
+            raise RenderingError("ShadingType shall be an integer")
+
         surface, state, _ = self._require()  # type: ignore[attr-defined]
         soft_mask = getattr(self, "soft_mask", None)
         try:
