@@ -85,8 +85,6 @@ def _appearance_to_rect(
     rh = rect[3] - rect[1]
     sx = rw / tw
     sy = rh / th
-    # This matrix maps the already-FormMatrix-transformed appearance bbox to
-    # annotation Rect. The Form renderer concatenates its own Matrix after this.
     return Matrix(sx, 0, 0, sy, rect[0] - tx0 * sx, rect[1] - ty0 * sy)
 
 
@@ -133,6 +131,18 @@ def _annotation_visible(doc, annot: PDFDict) -> bool:
     raw = resolve(doc, annot.get("F")) if annot.get("F") is not None else 0
     if isinstance(raw, bool) or not isinstance(raw, int):
         raise AnnotationRenderingError("annotation /F shall be an integer")
+    if raw & (8 | 16 | 256):
+        flags = []
+        if raw & 8:
+            flags.append("NoZoom")
+        if raw & 16:
+            flags.append("NoRotate")
+        if raw & 256:
+            flags.append("ToggleNoView")
+        raise AnnotationRenderingError(
+            "annotation display flag(s) require dedicated owned transform semantics: "
+            + ", ".join(flags)
+        )
     hidden = bool(raw & 2)
     invisible = bool(raw & 1)
     no_view = bool(raw & 32)
@@ -238,7 +248,6 @@ class AnnotationAppearanceRendererMixin:
             if hasattr(self, "_path_ctm"):
                 self._path_ctm = None
                 self._mixed_path_ctm = False
-            # _form applies the appearance's own Matrix and Resources/BBox.
             self._form(appearance)
             if self.stack:
                 raise AnnotationRenderingError("annotation appearance leaked graphics-state frames")
