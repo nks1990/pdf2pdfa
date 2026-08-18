@@ -113,15 +113,30 @@ def _normal_appearance(doc, annot: PDFDict) -> PDFStream | None:
         return normal
     if not isinstance(normal, PDFDict):
         raise AnnotationRenderingError("annotation /AP /N is neither stream nor state dictionary")
-    state_value = resolve(doc, annot.get("AS")) if annot.get("AS") is not None else None
-    if isinstance(state_value, PDFName) and state_value.value in normal:
-        selected = _stream(doc, normal[state_value.value])
-        if selected is None:
-            raise AnnotationRenderingError("annotation /AS selects a non-stream normal appearance")
-        return selected
-    streams = [stream for value in normal.values() if (stream := _stream(doc, value)) is not None]
-    if len(streams) == 1:
-        return streams[0]
+
+    states: dict[str, PDFStream] = {}
+    for name, value in normal.items():
+        stream = _stream(doc, value)
+        if stream is None:
+            raise AnnotationRenderingError(
+                f"annotation /AP /N state /{name} is not an appearance stream"
+            )
+        states[name] = stream
+    if not states:
+        raise AnnotationRenderingError("annotation /AP /N state dictionary is empty")
+
+    if annot.get("AS") is not None:
+        state_value = resolve(doc, annot.get("AS"))
+        if not isinstance(state_value, PDFName):
+            raise AnnotationRenderingError("annotation /AS shall be a name")
+        if state_value.value not in states:
+            raise AnnotationRenderingError(
+                f"annotation /AS /{state_value.value} does not select an /AP /N state"
+            )
+        return states[state_value.value]
+
+    if len(states) == 1:
+        return next(iter(states.values()))
     raise AnnotationRenderingError(
         "stateful annotation normal appearance requires a valid /AS selection"
     )
