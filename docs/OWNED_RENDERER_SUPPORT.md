@@ -10,6 +10,9 @@ an end-to-end regression.
 
 - vector fills, clipping and affine strokes;
 - TrueType/CIDFontType2 text and Type3 graphical CharProcs within the documented limits;
+- embedded CFF1 `/Type1C` simple fonts using owned WinAnsi/Differences mapping;
+- embedded CID-keyed `/CIDFontType0C` through Identity-H or explicit owned CMap streams;
+- CFF text fill/stroke/clip render modes through the same owned text-state machine;
 - raw/general-filtered images, baseline JPEG and CCITT Group 3/4/MR fax images;
 - image masks and soft masks;
 - device/calibrated/ICC/Indexed/Separation/DeviceN color paths already supported by the color engine;
@@ -26,9 +29,10 @@ an end-to-end regression.
 - ShadingType 6/7 Coons/tensor patch meshes;
 - PatternType 1 / PaintType 2 uncolored tiling;
 - pattern-colored strokes;
-- CFF/Type1C and CIDFontType0C PDF-font wiring (CFF1/Type2 core exists);
+- CFF CID per-FD FontMatrix composition;
+- Type0 vertical metrics/text;
 - Type1 PFA/PFB outline rendering;
-- unsupported predefined CMaps;
+- predefined non-Identity CMaps not yet bundled by the owned CMap layer;
 - JPX/JPEG 2000 and JBIG2 image codecs;
 - non-isolated and knockout transparency groups;
 - annotation appearance transparency flattening;

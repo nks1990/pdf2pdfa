@@ -10,6 +10,7 @@ from __future__ import annotations
 from pathlib import Path as FSPath
 
 from .ccitt_render import CCITTImageRendererMixin
+from .cff_render import CFFTextPageRendererMixin
 from .document import PDFDocument
 from .page_render import RenderedPage
 from .pattern_dispatch import CanonicalPatternShadingMixin
@@ -26,6 +27,7 @@ class FullOwnedPageRenderer(
     CanonicalPatternShadingMixin,
     PatternShadingRendererMixin,
     ShadingRendererMixin,
+    CFFTextPageRendererMixin,
     TransparencyRenderer,
 ):
     """Canonical renderer used by production conversion gates."""
