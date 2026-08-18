@@ -4,12 +4,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 import sys
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,13 +14,26 @@ def fail(message: str) -> None:
     raise SystemExit(f"release-check: {message}")
 
 
+def _version(pyproject: str) -> str:
+    project_match = re.search(r"(?ms)^\[project\]\s*(.*?)(?=^\[|\Z)", pyproject)
+    if project_match is None:
+        fail("pyproject.toml has no [project] table")
+    match = re.search(r'(?m)^version\s*=\s*"([^"]+)"\s*$', project_match.group(1))
+    if match is None:
+        fail("pyproject.toml has no literal project version")
+    return match.group(1).strip()
+
+
 def main() -> int:
     pyproject_path = ROOT / "pyproject.toml"
-    data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
-    project = data["project"]
-    version = str(project["version"]).strip()
+    text = pyproject_path.read_text(encoding="utf-8")
+    version = _version(text)
     if not version or version.startswith("0+"):
         fail(f"invalid project version: {version!r}")
+
+    dependencies = re.search(r"(?m)^dependencies\s*=\s*\[(.*?)\]", text, re.S)
+    if dependencies is None or dependencies.group(1).strip():
+        fail("runtime dependencies must be explicitly empty")
 
     expected = [
         ROOT / "README.md",
@@ -32,10 +41,12 @@ def main() -> int:
         ROOT / "CHANGELOG.md",
         ROOT / "SECURITY.md",
         ROOT / "CONTRIBUTING.md",
-        ROOT / "THIRD_PARTY_NOTICES.md",
-        ROOT / "pdf2pdfa" / "data" / "sRGB.icc.b64",
-        ROOT / "pdf2pdfa" / "data" / "CMYK.icc.b64",
+        ROOT / "pdf2pdfa" / "native" / "document.py",
+        ROOT / "pdf2pdfa" / "native" / "pdfa.py",
+        ROOT / "pdf2pdfa" / "native" / "pipeline.py",
+        ROOT / "pdf2pdfa" / "native" / "render.py",
         ROOT / "pdf2pdfa" / "py.typed",
+        ROOT / "tests" / "owned" / "test_package_ownership.py",
     ]
     missing = [str(path.relative_to(ROOT)) for path in expected if not path.exists()]
     if missing:
@@ -57,7 +68,7 @@ def main() -> int:
         if tag != expected_tag:
             fail(f"tag {tag!r} does not match package version {expected_tag!r}")
 
-    print(f"release-check: pdf2pdfa {version} OK")
+    print(f"release-check: pdf2pdfa {version} owned-runtime OK")
     return 0
 
 
