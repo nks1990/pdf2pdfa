@@ -19,10 +19,14 @@ from .shading_render import ShadingRendererMixin
 from .structure import walk_pages
 from .tiling_pattern import ColoredTilingPatternRendererMixin
 from .transparency_render import TransparencyRenderer
+from .uncolored_pattern import UncoloredTilingPatternRendererMixin
+from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
 
 
 class FullOwnedPageRenderer(
     CCITTImageRendererMixin,
+    UncoloredPatternSafetyMixin,
+    UncoloredTilingPatternRendererMixin,
     ColoredTilingPatternRendererMixin,
     CanonicalPatternShadingMixin,
     PatternShadingRendererMixin,
