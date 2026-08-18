@@ -91,6 +91,54 @@ def test_mixed_tag_is_supported_even_when_eol_is_optional():
     ) == b"\xf0\xf0"
 
 
+def test_encoded_byte_align_with_eol_aligns_after_eol_and_mr_tag():
+    # Row 1 starts at bit 0. Three fill zeros + 12-bit EOL + 1-bit tag make
+    # exactly 16 bits, so the first 1D data code starts on a byte boundary.
+    # After its seven data bits, four fill zeros make row 2 EOL+tag end on the
+    # next byte boundary as well.
+    encoded = _bits(
+        f"000 {EOL} 1 1011 011 "
+        f"0000 {EOL} 0 1 1"
+    )
+    assert decode_fax(
+        encoded,
+        columns=8,
+        rows=2,
+        k=2,
+        end_of_line=True,
+        encoded_byte_align=True,
+    ) == b"\xf0\xf0"
+
+
+def test_encoded_byte_align_rejects_eol_tag_ending_off_boundary():
+    # EOL+tag is 13 bits. With no leading fill it cannot satisfy the declared
+    # byte-alignment contract.
+    encoded = _bits(f"{EOL} 1 1011 011")
+    with pytest.raises(CCITTError, match="EOL\+tag.*byte boundary"):
+        decode_fax(
+            encoded,
+            columns=8,
+            rows=1,
+            k=2,
+            end_of_line=True,
+            encoded_byte_align=True,
+        )
+
+
+def test_encoded_byte_align_without_eol_consumes_only_zero_padding():
+    # Row1 tag+data consumes exactly one byte. Row2 therefore starts aligned and
+    # its tag can be read immediately without an EOL.
+    encoded = _bits("1 1011 011 0 1 1")
+    assert decode_fax(
+        encoded,
+        columns=8,
+        rows=2,
+        k=2,
+        end_of_line=False,
+        encoded_byte_align=True,
+    ) == b"\xf0\xf0"
+
+
 def test_blackis1_is_normalized_at_materialization_boundary():
     encoded = _bits(f"{EOL} 1 1011 011")
     ordinary = decode_fax(
