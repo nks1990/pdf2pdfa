@@ -12,6 +12,7 @@ from pathlib import Path as FSPath
 from .ccitt_render import CCITTImageRendererMixin
 from .cff_render import CFFTextPageRendererMixin
 from .document import PDFDocument
+from .nonisolated_transparency import NonIsolatedTransparencyRendererMixin
 from .page_render import RenderedPage
 from .pattern_dispatch import CanonicalPatternShadingMixin
 from .pattern_render import PatternShadingRendererMixin
@@ -32,6 +33,7 @@ class FullOwnedPageRenderer(
     PatternShadingRendererMixin,
     ShadingRendererMixin,
     CFFTextPageRendererMixin,
+    NonIsolatedTransparencyRendererMixin,
     TransparencyRenderer,
 ):
     """Canonical renderer used by production conversion gates."""
