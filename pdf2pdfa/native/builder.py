@@ -24,6 +24,7 @@ class PDFBuilder:
         self.objects: dict[PDFRef, PDFObject] = {}
         self.root_ref: PDFRef | None = None
         self.info_ref: PDFRef | None = None
+        self.trailer_extra = PDFDict()
         self._next_object = 1
 
     def add(self, value: PDFObject, *, generation: int = 0) -> PDFRef:
@@ -51,6 +52,14 @@ class PDFBuilder:
         if ref is not None and ref not in self.objects:
             raise ValueError("info reference must exist in builder")
         self.info_ref = ref
+
+    def set_trailer(self, key: str, value: PDFObject | None) -> None:
+        if key in {"Size", "Root", "Info", "Prev", "XRefStm"}:
+            raise ValueError(f"trailer key /{key} is managed by PDFBuilder")
+        if value is None:
+            self.trailer_extra.pop(key, None)
+        else:
+            self.trailer_extra[key] = value
 
     def to_bytes(self) -> bytes:
         buffer = BytesIO()
@@ -103,6 +112,8 @@ class PDFBuilder:
         trailer = PDFDict({"Size": size, "Root": self.root_ref})
         if self.info_ref is not None:
             trailer["Info"] = self.info_ref
+        for key, value in self.trailer_extra.items():
+            trailer[key] = value
         output.write(b"trailer\n")
         output.write(serialize_object(trailer))
         output.write(b"\nstartxref\n")
