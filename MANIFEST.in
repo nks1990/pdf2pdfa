@@ -3,7 +3,5 @@ include LICENSE
 include CHANGELOG.md
 include SECURITY.md
 include CONTRIBUTING.md
-include THIRD_PARTY_NOTICES.md
 recursive-include docs *.md
-recursive-include pdf2pdfa/data *.b64
 include pdf2pdfa/py.typed
