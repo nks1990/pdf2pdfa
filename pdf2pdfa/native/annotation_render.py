@@ -16,7 +16,7 @@ from decimal import Decimal
 from .cff_text_render import OwnedOutlineTextRenderer
 from .color import ColorSpace
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
-from .page_render import GraphicsState, RenderingError
+from .page_render import GraphicsState, RenderingError, _initial_ctm
 from .pattern_render import PatternColorSpaceState
 from .raster import Color, Matrix, Path
 from .structure import PageView, resolve
@@ -141,6 +141,17 @@ def _annotation_visible(doc, annot: PDFDict) -> bool:
 
 class AnnotationAppearanceRendererMixin:
     """Paint current normal annotation appearances into the page raster."""
+
+    def __init__(self, *args, render_annotations: bool = True, **kwargs) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[misc]
+        self.render_annotations = bool(render_annotations)
+
+    def render_page(self, page: PageView):
+        rendered = super().render_page(page)  # type: ignore[misc]
+        if self.render_annotations:
+            page_ctm, _width, _height, _crop = _initial_ctm(page, self.dpi)
+            self._paint_page_annotations(page, page_ctm)
+        return rendered
 
     def _reset_annotation_extra_state(self) -> dict[str, object]:
         names = (
