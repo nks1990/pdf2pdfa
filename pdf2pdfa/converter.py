@@ -1,94 +1,64 @@
-"""PDF/A conversion logic (supports PDF/A-1b, 2b, 3b)."""
+"""Public PDF/A conversion facade."""
 
 from __future__ import annotations
 
-import datetime as dt
-import logging
 from importlib.resources import files
-from typing import Optional
+from pathlib import Path
 
-import pikepdf
-from pikepdf import Dictionary, Name, Pdf
-
-from .colorspace import normalize_resource_color_spaces
-from .fonts import subset_and_embed_fonts
-from .icc import embed_icc_profile
-
-logger = logging.getLogger(__name__)
-
-_VALID_LEVELS = {"1b", "2b", "3b"}
+from .orchestrator import BackendChoice, ConversionOrchestrator, ConversionResult
+from .preflight import analyze_pdf
+from .profiles import get_policy
 
 
 class Converter:
-    """Convert supported PDFs to PDF/A (1b, 2b, or 3b)."""
+    """Convert PDFs to PDF/A-1b, PDF/A-2b or PDF/A-3b.
 
-    def __init__(self, icc_path: Optional[str] = None, level: str = "1b") -> None:
-        level = level.lower()
-        if level not in _VALID_LEVELS:
-            raise ValueError(
-                f"Invalid PDF/A level '{level}'. Must be one of: {', '.join(sorted(_VALID_LEVELS))}"
-            )
-        self.level = level
+    ``backend='auto'`` preserves already-valid files, uses the conservative
+    pikepdf fast path when preflight proves that safe, and falls back to
+    Ghostscript when a full rewrite is required.  ``validate=True`` makes
+    veraPDF conformance a publication gate.
+    """
+
+    def __init__(
+        self,
+        icc_path: str | None = None,
+        level: str = "1b",
+        *,
+        backend: BackendChoice = "auto",
+        validate: bool = False,
+        allow_signature_invalidation: bool = False,
+        ghostscript_executable: str | None = None,
+        verapdf_executable: str = "verapdf",
+        timeout: int = 300,
+    ) -> None:
+        policy = get_policy(level)
+        self.level = policy.level
         self.icc_path = icc_path or str(files(__package__).joinpath("data/sRGB.icc.b64"))
-        logger.debug("Using OutputIntent ICC %s (PDF/A-%s)", self.icc_path, self.level)
+        self._orchestrator = ConversionOrchestrator(
+            backend=backend,
+            validate=validate,
+            allow_signature_invalidation=allow_signature_invalidation,
+            ghostscript_executable=ghostscript_executable,
+            verapdf_executable=verapdf_executable,
+            timeout=timeout,
+        )
+
+    def preflight(self, input_path: str | Path):
+        """Return a non-mutating profile-aware preflight report."""
+        return analyze_pdf(input_path, self.level)
 
     def convert(
         self,
-        input_path: str,
-        output_path: str,
-        icc_profile: Optional[str] = None,
-        font_path: Optional[str] = None,
-    ) -> None:
-        part = self.level[0]
-        conformance = self.level[1].upper()
-        logger.info("Converting %s -> %s (PDF/A-%s)", input_path, output_path, self.level)
-
-        pdf = Pdf.open(input_path)
-        try:
-            subset_and_embed_fonts(pdf, font_path)
-
-            # OutputIntent describes the intended output condition.  It is not
-            # reused blindly as an RGB replacement profile: custom ICC files may
-            # legitimately be GRAY or CMYK.
-            output_profile = icc_profile or self.icc_path
-            embed_icc_profile(pdf, output_profile)
-
-            # Explicit device color resources get dedicated, bundled profiles
-            # with matching component counts (RGB N=3, CMYK N=4).
-            normalize_resource_color_spaces(pdf)
-
-            now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
-            xmp_date = now.isoformat()
-            info = pdf.docinfo or Dictionary()
-            title = str(info.get(Name.Title, ""))
-            author = str(info.get(Name.Author, ""))
-            subject = str(info.get(Name.Subject, ""))
-            keywords = str(info.get(Name.Keywords, ""))
-
-            with pdf.open_metadata(set_pikepdf_as_editor=True) as md:
-                md["pdfaid:part"] = part
-                md["pdfaid:conformance"] = conformance
-                md["dc:format"] = "application/pdf"
-                if title:
-                    md["dc:title"] = title
-                if author:
-                    md["dc:creator"] = [author]
-                if subject:
-                    md["dc:description"] = subject
-                if keywords:
-                    md["pdf:Keywords"] = keywords
-                md["xmp:CreatorTool"] = "pdf2pdfa"
-                md["xmp:CreateDate"] = xmp_date
-                md["xmp:ModifyDate"] = xmp_date
-
-            with pdf.open_metadata(set_pikepdf_as_editor=False) as md:
-                md["pdf:Producer"] = f"pikepdf {pikepdf.__version__} (pdf2pdfa)"
-
-            try:
-                pdf.save(output_path, optimize_version=True)
-            except TypeError:
-                pdf.save(output_path)
-        finally:
-            pdf.close()
-
-        logger.info("Saved PDF/A-%s to %s", self.level, output_path)
+        input_path: str | Path,
+        output_path: str | Path,
+        icc_profile: str | Path | None = None,
+        font_path: str | Path | None = None,
+    ) -> ConversionResult:
+        """Convert *input_path* and atomically publish *output_path*."""
+        return self._orchestrator.convert(
+            input_path,
+            output_path,
+            level=self.level,
+            icc_profile=icc_profile or self.icc_path,
+            font_path=font_path,
+        )
