@@ -1,8 +1,8 @@
 """Conservative PDF preflight for conversion planning.
 
-The preflight deliberately reports features instead of mutating them.  The
-conversion layer can then choose a safe in-place normalization path or a full
-rewrite backend.
+The preflight deliberately reports features instead of mutating them. The
+conversion layer can then choose a safe object-level normalization path or a
+full rewrite backend.
 """
 
 from __future__ import annotations
@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Any, Iterable
 
 import pikepdf
-from pikepdf import Name, Pdf
+from pikepdf import Pdf
 
 from .model import PreflightReport, Severity
 from .profiles import get_policy
+from .security import open_pdf, validate_input_file
 
 
 def _name(value: Any) -> str:
@@ -75,10 +76,14 @@ def _scan_resources(resources: Any, state: dict[str, Any], seen: set[tuple[int, 
             if subtype == "/Type0":
                 descendants = font.get("/DescendantFonts") or []
                 if descendants:
-                    desc = descendants[0]
-                    dfd = desc.get("/FontDescriptor")
+                    descendant = descendants[0]
+                    descendant_descriptor = descendant.get("/FontDescriptor")
                     embedded = bool(
-                        dfd and any(k in dfd for k in ("/FontFile", "/FontFile2", "/FontFile3"))
+                        descendant_descriptor
+                        and any(
+                            k in descendant_descriptor
+                            for k in ("/FontFile", "/FontFile2", "/FontFile3")
+                        )
                     )
             state["fonts_total"] += 1
             if not embedded:
@@ -91,49 +96,59 @@ def _scan_resources(resources: Any, state: dict[str, Any], seen: set[tuple[int, 
             if base:
                 state["font_names"].add(base)
 
-    cs = resources.get("/ColorSpace")
-    if cs:
-        for value in cs.values():
-            v = _name(value)
-            if v in ("/DeviceRGB", "/DeviceCMYK", "/DeviceGray"):
-                state["device_color_spaces"][v] += 1
+    color_spaces = resources.get("/ColorSpace")
+    if color_spaces:
+        for value in color_spaces.values():
+            value_name = _name(value)
+            if value_name in ("/DeviceRGB", "/DeviceCMYK", "/DeviceGray"):
+                state["device_color_spaces"][value_name] += 1
             elif isinstance(value, pikepdf.Array) and value:
                 state["color_space_families"][_name(value[0])] += 1
 
-    ext = resources.get("/ExtGState")
-    if ext:
-        for gs in ext.values():
+    ext_gstate = resources.get("/ExtGState")
+    if ext_gstate:
+        for graphic_state in ext_gstate.values():
             try:
-                if float(gs.get("/ca", 1)) < 1 or float(gs.get("/CA", 1)) < 1:
+                if float(graphic_state.get("/ca", 1)) < 1 or float(graphic_state.get("/CA", 1)) < 1:
                     state["transparency"] = True
-                smask = gs.get("/SMask")
-                if smask is not None and _name(smask) != "/None":
+                soft_mask = graphic_state.get("/SMask")
+                if soft_mask is not None and _name(soft_mask) != "/None":
                     state["transparency"] = True
             except Exception:
                 pass
 
     xobjects = resources.get("/XObject")
     if xobjects:
-        for xobj in xobjects.values():
-            subtype = _name(xobj.get("/Subtype"))
-            cs_value = xobj.get("/ColorSpace")
-            cs_name = _name(cs_value)
-            if cs_name in ("/DeviceRGB", "/DeviceCMYK", "/DeviceGray"):
-                state["device_color_spaces"][cs_name] += 1
-            if xobj.get("/SMask") is not None:
+        for xobject in xobjects.values():
+            subtype = _name(xobject.get("/Subtype"))
+            color_space = xobject.get("/ColorSpace")
+            color_space_name = _name(color_space)
+            if color_space_name in ("/DeviceRGB", "/DeviceCMYK", "/DeviceGray"):
+                state["device_color_spaces"][color_space_name] += 1
+            if xobject.get("/SMask") is not None:
                 state["transparency"] = True
-            group = xobj.get("/Group")
+            group = xobject.get("/Group")
             if group and _name(group.get("/S")) == "/Transparency":
                 state["transparency"] = True
             if subtype == "/Form":
-                _scan_resources(xobj.get("/Resources"), state, seen)
+                _scan_resources(xobject.get("/Resources"), state, seen)
 
 
-def analyze_pdf(path: str | Path, level: str = "1b") -> PreflightReport:
-    """Inspect *path* and return a profile-aware, non-mutating report."""
+def analyze_pdf(
+    path: str | Path,
+    level: str = "1b",
+    *,
+    password: str | bytes | None = None,
+    max_input_bytes: int | None = None,
+) -> PreflightReport:
+    """Inspect *path* and return a profile-aware, non-mutating report.
+
+    Passwords are consumed only by pikepdf in-process. They are never logged or
+    handed to a conversion subprocess.
+    """
     policy = get_policy(level)
+    source = validate_input_file(path, max_bytes=max_input_bytes)
     report = PreflightReport(level=policy.level)
-
     state: dict[str, Any] = {
         "fonts_total": 0,
         "fonts_unembedded": 0,
@@ -146,10 +161,9 @@ def analyze_pdf(path: str | Path, level: str = "1b") -> PreflightReport:
         "transparency": False,
     }
 
-    with Pdf.open(str(path)) as pdf:
+    with open_pdf(source, password=password) as pdf:
         root = pdf.Root
         encrypted = bool(getattr(pdf, "is_encrypted", False))
-
         names = root.get("/Names")
         attachments = bool(names and names.get("/EmbeddedFiles")) or bool(root.get("/AF"))
         javascript = bool(names and names.get("/JavaScript")) or _has_javascript_action(root)
@@ -162,13 +176,14 @@ def analyze_pdf(path: str | Path, level: str = "1b") -> PreflightReport:
         signed = False
         if acroform and acroform.get("/Fields"):
             for field in _iter_fields(acroform.get("/Fields")):
-                if _name(field.get("/FT")) == "/Sig" or field.get("/V") is not None and _name(field.get("/FT")) == "/Sig":
+                if _name(field.get("/FT")) == "/Sig":
                     signed = True
                     break
 
         annotations = 0
+        seen: set[tuple[int, int]] = set()
         for page in pdf.pages:
-            _scan_resources(page.get("/Resources"), state, set())
+            _scan_resources(page.get("/Resources"), state, seen)
             if _has_javascript_action(page):
                 javascript = True
             annots = page.get("/Annots") or []
@@ -180,15 +195,15 @@ def analyze_pdf(path: str | Path, level: str = "1b") -> PreflightReport:
                 if appearance:
                     for value in appearance.values():
                         if hasattr(value, "get"):
-                            _scan_resources(value.get("/Resources"), state, set())
+                            _scan_resources(value.get("/Resources"), state, seen)
 
         existing_claim: dict[str, str] = {}
         try:
-            with pdf.open_metadata() as md:
-                if md.get("pdfaid:part"):
-                    existing_claim["part"] = str(md.get("pdfaid:part"))
-                if md.get("pdfaid:conformance"):
-                    existing_claim["conformance"] = str(md.get("pdfaid:conformance"))
+            with pdf.open_metadata() as metadata:
+                if metadata.get("pdfaid:part"):
+                    existing_claim["part"] = str(metadata.get("pdfaid:part"))
+                if metadata.get("pdfaid:conformance"):
+                    existing_claim["conformance"] = str(metadata.get("pdfaid:conformance"))
         except Exception:
             pass
 
@@ -209,6 +224,7 @@ def analyze_pdf(path: str | Path, level: str = "1b") -> PreflightReport:
             "color_space_families": dict(state["color_space_families"]),
             "has_output_intent": bool(root.get("/OutputIntents")),
             "existing_pdfa_claim": existing_claim,
+            "input_bytes": source.stat().st_size,
         }
 
     if encrypted and not policy.allow_encryption:
@@ -237,11 +253,10 @@ def analyze_pdf(path: str | Path, level: str = "1b") -> PreflightReport:
             repairable=False,
         )
     if state["fonts_unembedded"]:
-        severity = Severity.WARNING
         report.add(
             "unembedded_fonts",
             f"Found {state['fonts_unembedded']} unembedded font resource(s).",
-            severity,
+            Severity.WARNING,
             repairable=True,
             count=state["fonts_unembedded"],
         )
