@@ -76,6 +76,24 @@ class CIDRange:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class NotDefRange:
+    start: int
+    end: int
+    code_length: int
+    cid: int
+
+    def lookup(self, raw: bytes) -> int | None:
+        if len(raw) != self.code_length:
+            return None
+        code = int.from_bytes(raw, "big")
+        if self.start <= code <= self.end:
+            # Adobe CMap notdefrange maps every code in the range to ONE CID;
+            # unlike cidrange the destination is not incremented.
+            return self.cid
+        return None
+
+
 class CIDCMap:
     def __init__(
         self,
@@ -84,7 +102,7 @@ class CIDCMap:
         cid_chars: dict[bytes, int] | None = None,
         cid_ranges: Iterable[CIDRange] = (),
         notdef_chars: dict[bytes, int] | None = None,
-        notdef_ranges: Iterable[CIDRange] = (),
+        notdef_ranges: Iterable[NotDefRange] = (),
         vertical: bool | None = None,
         base: "CIDCMap | None" = None,
         name: str = "",
@@ -133,7 +151,7 @@ class CIDCMap:
         cid_chars: dict[bytes, int] = {}
         ranges: list[CIDRange] = []
         notdef_chars: dict[bytes, int] = {}
-        notdef_ranges: list[CIDRange] = []
+        notdef_ranges: list[NotDefRange] = []
         vertical: bool | None = None
         content_base: CIDCMap | None = None
         index = 0
@@ -213,28 +231,48 @@ class CIDCMap:
                         target[raw] = cid
                         index += 2
                     continue
-                if operator in {b"begincidrange", b"beginnotdefrange"}:
-                    target_ranges = ranges if operator == b"begincidrange" else notdef_ranges
-                    label = "cidrange" if operator == b"begincidrange" else "notdefrange"
+                if operator == b"begincidrange":
                     index += 2
                     for _ in range(count):
                         if index + 2 >= len(tokens):
-                            raise CMapError(f"truncated {label}")
+                            raise CMapError("truncated cidrange")
                         low_raw = _hex(tokens[index])
                         high_raw = _hex(tokens[index + 1])
                         try:
                             cid = int(tokens[index + 2])
                         except ValueError as exc:
-                            raise CMapError(f"{label} destination is not an integer") from exc
+                            raise CMapError("cidrange destination is not an integer") from exc
                         if cid < 0:
-                            raise CMapError(f"{label} destination cannot be negative")
+                            raise CMapError("cidrange destination cannot be negative")
                         if len(low_raw) != len(high_raw):
-                            raise CMapError(f"{label} bounds have different lengths")
+                            raise CMapError("cidrange bounds have different lengths")
                         start = int.from_bytes(low_raw, "big")
                         end = int.from_bytes(high_raw, "big")
                         if end < start:
-                            raise CMapError(f"{label} end precedes start")
-                        target_ranges.append(CIDRange(start, end, len(low_raw), cid))
+                            raise CMapError("cidrange end precedes start")
+                        ranges.append(CIDRange(start, end, len(low_raw), cid))
+                        index += 3
+                    continue
+                if operator == b"beginnotdefrange":
+                    index += 2
+                    for _ in range(count):
+                        if index + 2 >= len(tokens):
+                            raise CMapError("truncated notdefrange")
+                        low_raw = _hex(tokens[index])
+                        high_raw = _hex(tokens[index + 1])
+                        try:
+                            cid = int(tokens[index + 2])
+                        except ValueError as exc:
+                            raise CMapError("notdefrange destination is not an integer") from exc
+                        if cid < 0:
+                            raise CMapError("notdefrange destination cannot be negative")
+                        if len(low_raw) != len(high_raw):
+                            raise CMapError("notdefrange bounds have different lengths")
+                        start = int.from_bytes(low_raw, "big")
+                        end = int.from_bytes(high_raw, "big")
+                        if end < start:
+                            raise CMapError("notdefrange end precedes start")
+                        notdef_ranges.append(NotDefRange(start, end, len(low_raw), cid))
                         index += 3
                     continue
             index += 1
