@@ -8,7 +8,7 @@ from pdf2pdfa.native.owned_renderer import render_page_full
 from pdf2pdfa.native.page_render import UnsupportedRenderingError
 
 
-def _pdf_with_knockout_form(content: bytes, extgstates: PDFDict) -> bytes:
+def _pdf_with_knockout_form(content: bytes, extgstates: PDFDict | None = None) -> bytes:
     builder = PDFBuilder(version="1.7")
     form = builder.add(
         PDFStream(
@@ -17,7 +17,7 @@ def _pdf_with_knockout_form(content: bytes, extgstates: PDFDict) -> bytes:
                     "Type": PDFName("XObject"),
                     "Subtype": PDFName("Form"),
                     "BBox": [0, 0, 40, 40],
-                    "Resources": PDFDict({"ExtGState": extgstates}),
+                    "Resources": PDFDict({"ExtGState": extgstates or PDFDict()}),
                     "Group": PDFDict(
                         {
                             "S": PDFName("Transparency"),
@@ -86,6 +86,23 @@ def test_text_knockout_false_is_fail_closed_at_text_show_boundary():
     with pytest.raises(UnsupportedRenderingError, match="TK false"):
         render_page_full(
             _pdf_with_knockout_form(b"/NoTK gs BT (A) Tj ET", states),
+            dpi=72,
+        )
+
+
+def test_combined_fill_and_stroke_path_is_not_split_into_two_knockout_siblings():
+    with pytest.raises(UnsupportedRenderingError, match="combined fill\+stroke path"):
+        render_page_full(
+            _pdf_with_knockout_form(b"0 0 20 20 re B"),
+            dpi=72,
+        )
+
+
+def test_fill_and_stroke_text_mode_requires_one_glyph_transaction():
+    # The compound-object guard deliberately fires before font resolution.
+    with pytest.raises(UnsupportedRenderingError, match="fill\+stroke text"):
+        render_page_full(
+            _pdf_with_knockout_form(b"BT 2 Tr (A) Tj ET"),
             dpi=72,
         )
 
