@@ -131,11 +131,10 @@ class OwnedPageRenderer(PageRenderer):
         style,
         render_mode: int,
     ) -> None:
-        del style
-        if render_mode != 0:
-            raise UnsupportedRenderingError(
-                f"Type3 painter received unsupported text rendering mode {render_mode}"
-            )
+        # PDF text rendering mode is intentionally ignored for Type3. The
+        # CharProc itself controls painting, and Tr 4..7 do not contribute a
+        # Type3 glyph outline to the text clipping path.
+        del style, render_mode
         if self._type3_depth >= 16:
             raise RenderingError("Type3 CharProc recursion exceeds 16")
 
@@ -212,7 +211,7 @@ class OwnedPageRenderer(PageRenderer):
         even_odd = op in {"f*", "B*", "b*"}
 
         # W/W* modifies the clipping path for the same path object when that
-        # path is terminated by a painting operator (or n).  Applying it after
+        # path is terminated by a painting operator (or n). Applying it after
         # paint would incorrectly let B/S/f escape the newly selected clip.
         self._apply_pending_clip()
 
@@ -263,7 +262,12 @@ class OwnedPageRenderer(PageRenderer):
 
     def _show_text(self, op: str, args: list[PDFObject]) -> None:
         _, state, text = self._require()
-        if text.state.render_mode in (1, 2, 5, 6):
+        # Tr stroke modes do not turn a Type3 CharProc into outline-stroked
+        # text; therefore the affine-stroke guard is irrelevant to Type3.
+        if (
+            not isinstance(text.state.font, Type3TextFont)
+            and text.state.render_mode in (1, 2, 5, 6)
+        ):
             a, b, c, d = state.ctm.a, state.ctm.b, state.ctm.c, state.ctm.d
             l1 = (a * a + b * b) ** 0.5
             l2 = (c * c + d * d) ** 0.5
