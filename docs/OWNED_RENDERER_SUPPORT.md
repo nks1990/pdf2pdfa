@@ -12,6 +12,7 @@ an end-to-end regression.
 - TrueType/CIDFontType2 text and Type3 graphical CharProcs within the documented limits;
 - embedded Type1 PFA/PFB `/FontFile` programs rendered directly from owned eexec/CharString outlines, including PFA/PFB, local Subrs, PDF-authoritative Widths, explicit PDF encodings, built-in StandardEncoding/custom 256-array encoding fallback and Differences semantics;
 - Type1 StandardEncoding `seac` composites resolved from the original base/accent CharStrings with owned sidebearing/offset composition; nested/missing/undefined components fail closed;
+- standard Type1 OtherSubrs Flex 1/2/0, hint-replacement OtherSubr 3 and counter-control hint OtherSubrs 12/13, including seven-vector/two-cubic Flex geometry and `pop pop setcurrentpoint` result protocol;
 - Type1 fill/stroke/clip render modes through the same owned text-state machine used by TrueType/CFF, including Type1 inside transparency groups and annotation appearances;
 - embedded CFF1 `/Type1C` simple fonts using owned WinAnsi/Differences mapping;
 - embedded CID-keyed `/CIDFontType0C` and CIDFontType2 through the shared owned Type0 CMap resolver;
@@ -40,7 +41,7 @@ an end-to-end regression.
 
 - ShadingType 6/7 Coons/tensor patch meshes;
 - PaintType 2 cell soft masks/transparency groups and intrinsic-color content;
-- Type1 `callothersubr`/Flex glyph programs;
+- proprietary/Multiple-Master Type1 OtherSubrs that require PostScript/MM semantics beyond the standard Flex/hint set;
 - Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
 - CFF CID per-FD FontMatrix composition;
 - predefined non-Identity Adobe CMaps (Japan1/GB1/CNS1/Korea1 families) until their mapping data is added as owned repository resources;
