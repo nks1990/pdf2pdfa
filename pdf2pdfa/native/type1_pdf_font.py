@@ -89,6 +89,13 @@ def _matrix(values: tuple[float, ...]) -> Matrix:
     return matrix
 
 
+def _needs_builtin_encoding(doc: PDFDocument, value: PDFObject | None) -> bool:
+    if value is None:
+        return True
+    resolved = resolve(doc, value)
+    return isinstance(resolved, PDFDict) and resolved.get("BaseEncoding") is None
+
+
 class Type1PDFTextFont:
     """Resolve simple PDF Type1 character codes to original embedded outlines."""
 
@@ -105,11 +112,16 @@ class Type1PDFTextFont:
         self.base_font = _name(doc, self.font.get("BaseFont"))
         descriptor = _dict(doc, self.font.get("FontDescriptor"), "FontDescriptor")
         self.program, program_bytes = _program(doc, descriptor)
+        encoding_value = self.font.get("Encoding")
         try:
-            built_in = parse_type1_builtin_encoding(program_bytes)
+            built_in = (
+                parse_type1_builtin_encoding(program_bytes)
+                if _needs_builtin_encoding(doc, encoding_value)
+                else {}
+            )
             self.encoding = parse_type1_pdf_encoding(
                 doc,
-                self.font.get("Encoding"),
+                encoding_value,
                 built_in=built_in,
             )
         except Type1EncodingError as exc:
