@@ -87,15 +87,55 @@ def test_type3_differences_font_renders_charprocs_and_advances():
     assert after.r > 0.9 and after.b < 0.1
 
 
-def test_type3_invisible_text_advances_without_painting():
+@pytest.mark.parametrize("render_mode", range(8))
+def test_type3_text_rendering_mode_does_not_change_charproc_painting(render_mode: int):
     page = render_page(
-        _pdf(content=b"0 0 0 rg BT /F3 20 Tf 3 Tr 1 0 0 1 10 20 Tm (AB) Tj ET"),
+        _pdf(
+            content=(
+                b"1 0 0 rg\n"
+                + f"BT /F3 20 Tf {render_mode} Tr 1 0 0 1 10 20 Tm (A) Tj ET\n".encode("ascii")
+            )
+        ),
         dpi=72,
     )
-    for y in range(page.height):
-        for x in range(page.width):
-            pixel = page.surface.get_pixel(x, y)
-            assert pixel.r > 0.99 and pixel.g > 0.99 and pixel.b > 0.99
+    glyph = _pixel(page, 14, 25)
+    outside = _pixel(page, 50, 50)
+    assert glyph.r > 0.9 and glyph.g < 0.1 and glyph.b < 0.1
+    assert outside.r > 0.99 and outside.g > 0.99 and outside.b > 0.99
+
+
+@pytest.mark.parametrize("render_mode", [4, 5, 6, 7])
+def test_type3_clip_modes_do_not_add_charproc_to_text_clipping_path(render_mode: int):
+    page = render_page(
+        _pdf(
+            content=(
+                b"0 0 0 rg\n"
+                + f"BT /F3 20 Tf {render_mode} Tr 1 0 0 1 10 20 Tm (A) Tj ET\n".encode("ascii")
+                + b"1 0 0 rg 0 0 100 100 re f\n"
+            )
+        ),
+        dpi=72,
+    )
+    # If Tr 4..7 incorrectly installed a Type3 glyph clip, this pixel far away
+    # from the glyph would remain white instead of being covered by the red rect.
+    far = _pixel(page, 80, 80)
+    assert far.r > 0.9 and far.g < 0.1 and far.b < 0.1
+
+
+@pytest.mark.parametrize("render_mode", [1, 2, 5, 6])
+def test_type3_stroke_like_modes_do_not_trigger_affine_text_stroke_guard(render_mode: int):
+    page = render_page(
+        _pdf(
+            content=(
+                b"2 0 0 1 0 0 cm\n"
+                b"0 0 0 rg\n"
+                + f"BT /F3 20 Tf {render_mode} Tr 1 0 0 1 10 20 Tm (A) Tj ET\n".encode("ascii")
+            )
+        ),
+        dpi=72,
+    )
+    glyph = _pixel(page, 25, 25)
+    assert glyph.r < 0.1 and glyph.g < 0.1 and glyph.b < 0.1
 
 
 def test_type3_charproc_must_start_with_d0_or_d1():
@@ -139,13 +179,5 @@ def test_type3_nested_text_is_fail_closed():
                 content=b"BT /F3 20 Tf 1 0 0 1 10 20 Tm (A) Tj ET",
                 nested_text=True,
             ),
-            dpi=72,
-        )
-
-
-def test_type3_stroke_render_mode_remains_explicitly_unsupported():
-    with pytest.raises(Exception, match="Type3 text rendering modes"):
-        render_page(
-            _pdf(content=b"BT /F3 20 Tf 1 Tr 1 0 0 1 10 20 Tm (A) Tj ET"),
             dpi=72,
         )
