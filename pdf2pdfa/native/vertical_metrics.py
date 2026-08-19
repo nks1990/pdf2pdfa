@@ -2,9 +2,12 @@
 
 For writing mode 1 each CID has a position vector ``v = (vx, vy)`` locating the
 vertical origin relative to the glyph's horizontal origin, plus a displacement
-``w = (0, wy)`` to the next text position.  PDF's DW2 default is
+``w = (0, wy)`` to the next text position. PDF's DW2 default is
 ``[880 -1000]``: default ``vy`` and ``wy``; default ``vx`` is half the glyph's
-horizontal width.  W2 overrides all three values for individual CIDs/ranges.
+horizontal width. W2 overrides all three values for individual CIDs/ranges.
+
+Range records stay compact: a malicious ``0 2147483647 ...`` record must never
+allocate one dictionary entry per CID.
 """
 
 from __future__ import annotations
@@ -21,6 +24,10 @@ class VerticalMetricsError(ValueError):
     pass
 
 
+_MAX_W2_ARRAY_METRICS = 1_000_000
+_MAX_W2_RANGES = 100_000
+
+
 @dataclass(frozen=True, slots=True)
 class VerticalMetric:
     displacement_y: float
@@ -28,11 +35,24 @@ class VerticalMetric:
     position_y: float
 
 
+@dataclass(frozen=True, slots=True)
+class VerticalMetricRange:
+    start: int
+    end: int
+    metric: VerticalMetric
+
+    def contains(self, cid: int) -> bool:
+        return self.start <= cid <= self.end
+
+
 def _number(doc: PDFDocument, value: PDFObject, label: str) -> float:
     value = resolve(doc, value)
     if isinstance(value, bool) or not isinstance(value, (int, Decimal)):
         raise VerticalMetricsError(f"{label} shall be numeric")
-    return float(value)
+    number = float(value)
+    if number != number or number in (float("inf"), float("-inf")):
+        raise VerticalMetricsError(f"{label} shall be finite")
+    return number
 
 
 def _exact_cid(doc: PDFDocument, value: PDFObject, label: str) -> int:
@@ -51,6 +71,7 @@ class VerticalMetrics:
         self.default_position_y = 880.0
         self.default_displacement_y = -1000.0
         self.overrides: dict[int, VerticalMetric] = {}
+        self.ranges: list[VerticalMetricRange] = []
         self._parse_dw2(cidfont)
         self._parse_w2(cidfont)
 
@@ -70,6 +91,8 @@ class VerticalMetrics:
         if not isinstance(raw, list):
             raise VerticalMetricsError("CIDFont /W2 shall be an array")
 
+        array_metrics = 0
+        range_records = 0
         index = 0
         while index < len(raw):
             start = _exact_cid(self.doc, raw[index], "CIDFont /W2 start CID")
@@ -84,6 +107,12 @@ class VerticalMetrics:
                     raise VerticalMetricsError(
                         "CIDFont /W2 consecutive metric array length shall be a multiple of 3"
                     )
+                count = len(second) // 3
+                array_metrics += count
+                if array_metrics > _MAX_W2_ARRAY_METRICS:
+                    raise VerticalMetricsError("CIDFont /W2 contains too many explicit metrics")
+                if start + count - 1 > 0x7FFFFFFF:
+                    raise VerticalMetricsError("CIDFont /W2 explicit CID sequence exceeds owned limit")
                 for offset in range(0, len(second), 3):
                     cid = start + offset // 3
                     self.overrides[cid] = VerticalMetric(
@@ -104,8 +133,10 @@ class VerticalMetrics:
                 _number(self.doc, raw[index + 2], "CIDFont /W2 range vy"),
             )
             index += 3
-            for cid in range(start, end + 1):
-                self.overrides[cid] = metric
+            range_records += 1
+            if range_records > _MAX_W2_RANGES:
+                raise VerticalMetricsError("CIDFont /W2 contains too many range records")
+            self.ranges.append(VerticalMetricRange(start, end, metric))
 
     def metric(self, cid: int, horizontal_width: float) -> VerticalMetric:
         if cid < 0:
@@ -113,6 +144,12 @@ class VerticalMetrics:
         override = self.overrides.get(cid)
         if override is not None:
             return override
+        # Later W2 records are more specific operationally if malformed input
+        # overlaps ranges; looking in reverse gives deterministic last-record
+        # precedence without expanding any range.
+        for item in reversed(self.ranges):
+            if item.contains(cid):
+                return item.metric
         return VerticalMetric(
             self.default_displacement_y,
             float(horizontal_width) * 0.5,
