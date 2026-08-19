@@ -30,15 +30,16 @@ through that renderer.
 
 Knockout transparency groups (`/Group << /S /Transparency /K true >>`) are
 supported only where the renderer can retain object shape independently from
-object opacity.
+object opacity and where one PDF graphical object maps to one owned raster
+transaction.
 
 Currently supported inside knockout execution:
 
-- path fill/stroke objects using solid colors;
-- outline-based TrueType/CFF/Type1 text when `/TK true`;
+- path **fill-only or stroke-only** objects using solid colors;
+- outline-based TrueType/CFF/Type1 text when `/TK true`, except fill+stroke
+  render modes that require one compound glyph transaction;
 - opaque images;
 - directly painted owned shadings;
-- normal Form contents that do not introduce one of the blockers below;
 - isolated and non-isolated knockout group boundaries in the RGB/implicit
   group blending space.
 
@@ -52,9 +53,13 @@ Currently fail-closed inside knockout execution:
 - `/TK false` text;
 - soft masks set inside the knockout group;
 - Type3 glyphs;
+- combined path fill+stroke (`B`, `B*`, `b`, `b*`);
+- fill+stroke text render modes 2 and 6;
 - pattern fills, pattern strokes or pattern-colored text;
 - masked/transparent images whose decoded alpha no longer exposes whether the
   mask represented shape or opacity;
+- ordinary Form XObjects, because their contents require one Form-object
+  transaction rather than treating internal paint operations as knockout siblings;
 - nested transparency groups while knockout execution is active;
 - explicit non-RGB group blending color spaces.
 
