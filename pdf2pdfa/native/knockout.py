@@ -1,19 +1,21 @@
 """Owned primitives for PDF knockout transparency compositing.
 
-PDF knockout needs *shape* to remain distinct from opacity.  The source alpha
-says how opaque an object is; the shape says where the object exists for
-knockout replacement.  A half-opaque object can therefore have a full shape.
+Knockout needs three independent quantities at each point:
 
-This module deliberately contains no PDF parser knowledge.  It provides the
-small raster algebra used by the transparency renderer and can be tested in
-isolation.
+* the immutable group backdrop;
+* accumulated group shape;
+* accumulated group alpha.
+
+Object shape is deliberately not folded into object opacity.  This module uses
+the PDF group-compositing recurrence directly, so fractional scan-conversion
+coverage is applied once as shape instead of being multiplied into alpha twice.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .raster import Color, Surface
+from .raster import Color, Surface, blend_rgb
 
 
 def _clamp(value: float) -> float:
@@ -21,31 +23,74 @@ def _clamp(value: float) -> float:
 
 
 def union_coverage(backdrop: float, source: float) -> float:
-    """Return the union of two independent 0..1 coverage values."""
+    """Return the union of two independent 0..1 coverage/alpha values."""
 
     backdrop = _clamp(backdrop)
     source = _clamp(source)
     return backdrop + source - backdrop * source
 
 
-def knockout_pixel(backdrop: Color, source: Color, shape: float) -> Color:
-    """Replace ``backdrop`` by ``source`` according to knockout ``shape``.
+def composite_knockout_element(
+    backdrop: Color,
+    previous: Color,
+    group_alpha: float,
+    source: Color,
+    shape: float,
+    *,
+    blend_mode: str = "Normal",
+) -> tuple[Color, float]:
+    """Composite one intrinsic elementary object in a knockout group.
 
-    This is the straight-alpha equivalent of the PDF knockout blend used by
-    mature rasterizers: shape interpolates both the source/backdrop color and
-    their alpha.  Crucially, ``shape`` is *not* source opacity.
+    ``source.a`` is source *opacity* (q_s), not source alpha. ``shape`` is the
+    independent source shape (f_s), including geometry/scan conversion/clip for
+    the currently supported AIS=false subset.  ``group_alpha`` is alpha_g from
+    the previous group element, which cannot in general be recovered from the
+    visible surface alpha when the group backdrop is opaque.
     """
 
-    h = _clamp(shape)
-    b = backdrop.clamped()
-    s = source.clamped()
-    inv = 1.0 - h
-    return Color(
-        inv * b.r + h * s.r,
-        inv * b.g + h * s.g,
-        inv * b.b + h * s.b,
-        inv * b.a + h * s.a,
-    ).clamped()
+    cb = backdrop.clamped()
+    ci = previous.clamped()
+    cs = source.clamped()
+    fs = _clamp(shape)
+    qs = cs.a
+    alpha_s = fs * qs
+    alpha_b = cb.a
+    alpha_g_prev = _clamp(group_alpha)
+
+    # PDF group alpha recurrence for a knockout group (b = 0 / fixed group
+    # backdrop for every element).
+    alpha_g = (
+        (1.0 - fs) * alpha_g_prev
+        + (fs - alpha_s) * alpha_b
+        + alpha_s
+    )
+    alpha_g = _clamp(alpha_g)
+    alpha_r = union_coverage(alpha_b, alpha_g)
+
+    blended = blend_rgb(
+        (cb.r, cb.g, cb.b),
+        (cs.r, cs.g, cs.b),
+        blend_mode,
+    )
+    channels: list[float] = []
+    for previous_c, backdrop_c, source_c, blend_c in zip(
+        (ci.r, ci.g, ci.b),
+        (cb.r, cb.g, cb.b),
+        (cs.r, cs.g, cs.b),
+        blended,
+    ):
+        ct = (
+            (fs - alpha_s) * alpha_b * backdrop_c
+            + alpha_s
+            * (
+                (1.0 - alpha_b) * source_c
+                + alpha_b * blend_c
+            )
+        )
+        numerator = (1.0 - fs) * ci.a * previous_c + ct
+        channels.append(_clamp(numerator / alpha_r) if alpha_r > 0.0 else 0.0)
+
+    return Color(channels[0], channels[1], channels[2], alpha_r), alpha_g
 
 
 def _write_pixel(surface: Surface, x: int, y: int, color: Color) -> None:
@@ -65,10 +110,12 @@ def knockout_surface(
     x: int = 0,
     y: int = 0,
 ) -> None:
-    """Apply one knockout object surface to ``destination``.
+    """Composite a one-element knockout source surface over destination.
 
-    ``shape`` is one byte per source pixel.  The destination clip is respected
-    as an additional geometric boundary; it does not alter the source opacity.
+    This convenience primitive is mainly useful for focused raster tests. Each
+    source pixel supplies intrinsic color/opacity and ``shape`` supplies the
+    independent object shape. The destination pixel is both group backdrop and
+    previous result because there is only one element.
     """
 
     if len(shape) != source.width * source.height:
@@ -82,17 +129,18 @@ def knockout_surface(
             if dx < 0 or dx >= destination.width:
                 continue
             source_index = sy * source.width + sx
-            h = shape[source_index] / 255.0
-            if h <= 0.0:
+            fs = (shape[source_index] / 255.0) * (
+                destination.clip[dy * destination.width + dx] / 255.0
+            )
+            if fs <= 0.0:
                 continue
-            clip = destination.clip[dy * destination.width + dx] / 255.0
-            h *= clip
-            if h <= 0.0:
-                continue
-            result = knockout_pixel(
-                destination.get_pixel(dx, dy),
+            backdrop = destination.get_pixel(dx, dy)
+            result, _ = composite_knockout_element(
+                backdrop,
+                backdrop,
+                0.0,
                 source.get_pixel(sx, sy),
-                h,
+                fs,
             )
             _write_pixel(destination, dx, dy, result)
 
@@ -136,16 +184,15 @@ class ShapeAccumulator:
 
 
 class KnockoutSurface(Surface):
-    """Surface that composites every paint sample against a fixed group backdrop.
+    """Surface implementing the PDF knockout recurrence for intrinsic objects.
 
-    The current pixels hold the evolving knockout-group result.  A second,
-    immutable pixel plane stores the group backdrop.  Each paint sample is
-    first rendered against that fixed backdrop and then replaces the evolving
-    result according to its independent shape coverage.
+    The visible pixels hold C_i/alpha_i.  The immutable backdrop stores C_0 and
+    alpha_0.  ``group_alpha`` stores alpha_g independently, which is essential
+    for non-isolated groups with opaque backdrops.  ``shape`` stores f_g for
+    diagnostics/future group interactions.
 
-    ``shape_clip`` is used only when alpha is opacity (AIS=false).  It lets the
-    renderer provide the geometric clip that existed *before* an opacity soft
-    mask was folded into ``clip``.
+    The production knockout path currently admits AIS=false only, so the
+    incoming ``coverage`` is source shape and ``source.a`` is source opacity.
     """
 
     def __init__(self, backdrop: Surface):
@@ -158,8 +205,7 @@ class KnockoutSurface(Surface):
         self.clip[:] = backdrop.clip
         self._knockout_backdrop = bytes(backdrop.pixels)
         self.shape = ShapeAccumulator.empty(self.width, self.height)
-        self.shape_clip: bytearray | None = None
-        self.alpha_is_shape = False
+        self.group_alpha = bytearray(self.width * self.height)
 
     def _fixed_backdrop_pixel(self, x: int, y: int) -> Color:
         offset = self._offset(x, y)
@@ -183,50 +229,18 @@ class KnockoutSurface(Surface):
         if x < 0 or x >= self.width or y < 0 or y >= self.height:
             return
         index = y * self.width + x
-        geometric = _clamp(coverage)
-        if geometric <= 0.0:
+        fs = _clamp(coverage) * (self.clip[index] / 255.0)
+        if fs <= 0.0:
             return
 
-        paint_clip = self.clip[index] / 255.0
-        if paint_clip <= 0.0:
-            return
-
-        original = source.clamped()
-        if self.alpha_is_shape:
-            # AIS=true: alpha constant + soft mask are shape, not opacity.
-            shape = geometric * paint_clip * original.a
-            paint_source = Color(original.r, original.g, original.b, 1.0)
-            paint_coverage = geometric * original.a
-        else:
-            # AIS=false: source alpha and soft mask are opacity.  Knockout shape
-            # remains geometric, so use the pre-soft-mask clip when supplied.
-            shape_clip = (
-                self.shape_clip[index] / 255.0
-                if self.shape_clip is not None
-                else paint_clip
-            )
-            shape = geometric * shape_clip
-            paint_source = original
-            paint_coverage = geometric
-
-        shape = _clamp(shape)
-        if shape <= 0.0:
-            return
-
-        current = self.get_pixel(x, y)
-        fixed = self._fixed_backdrop_pixel(x, y)
-        _write_pixel(self, x, y, fixed)
-        try:
-            super().composite_pixel(
-                x,
-                y,
-                paint_source,
-                coverage=paint_coverage,
-                blend_mode=blend_mode,
-            )
-            object_result = self.get_pixel(x, y)
-        finally:
-            _write_pixel(self, x, y, current)
-
-        _write_pixel(self, x, y, knockout_pixel(current, object_result, shape))
-        self.shape.add_pixel(index, shape)
+        result, alpha_g = composite_knockout_element(
+            self._fixed_backdrop_pixel(x, y),
+            self.get_pixel(x, y),
+            self.group_alpha[index] / 255.0,
+            source,
+            fs,
+            blend_mode=blend_mode,
+        )
+        _write_pixel(self, x, y, result)
+        self.group_alpha[index] = round(alpha_g * 255)
+        self.shape.add_pixel(index, fs)
