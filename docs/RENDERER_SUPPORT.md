@@ -19,12 +19,21 @@ through that renderer.
 - Raw/filtered images, baseline JPEG and CCITT Group 3/4/mixed fax.
 - Image masks and soft masks in ordinary transparency rendering.
 - PDF blend modes implemented by the owned raster engine.
-- Shading types 1, 2, 3, 4 and 5.
-- PatternType 2 shading patterns.
+- Shading types 1-7, including Coons and tensor-product patch meshes.
+- PatternType 2 shading patterns, routed through the same shading dispatcher.
 - PatternType 1 colored and bounded uncolored tiling patterns.
 - Isolated transparency groups.
 - RGB non-isolated transparency groups.
 - Normal annotation appearances and static PDF/A-1 appearance repair.
+
+All shading types are staged as one intrinsic graphical object before outer
+clip, constant alpha, soft-mask and blend state are applied. This prevents
+Background+mesh from receiving transparency twice and preserves the shape /
+opacity split needed by knockout rendering.
+
+Patch-mesh tessellation is bounded by patch count, generated triangle count and
+device-space curvature. Patch streams that exceed those owned limits fail
+closed rather than silently reducing geometric accuracy.
 
 ## Bounded knockout support
 
@@ -39,13 +48,14 @@ Currently supported inside knockout execution:
 - outline-based TrueType/CFF/Type1 text when `/TK true`, except fill+stroke
   render modes that require one compound glyph transaction;
 - opaque images;
-- directly painted owned shadings;
+- directly painted owned shadings 1-7;
 - isolated and non-isolated knockout group boundaries in the RGB/implicit
   group blending space.
 
-The knockout raster path uses an immutable group backdrop plus an independent
-shape plane. A partially opaque object can therefore replace an earlier sibling
-over its full geometric shape instead of treating opacity as shape.
+The knockout raster path uses an immutable group backdrop plus independent
+group-shape and group-alpha planes. A partially opaque object can therefore
+replace an earlier sibling over its full geometric shape instead of treating
+opacity as shape.
 
 Currently fail-closed inside knockout execution:
 
@@ -71,8 +81,6 @@ rendered as ordinary source-over transparency.
 - Adobe predefined non-Identity CMap mapping data (Japan1/GB1/CNS1/Korea1 families).
 - JPX / JPEG 2000 image decoding.
 - JBIG2 image decoding.
-- ShadingType 6 Coons-patch meshes.
-- ShadingType 7 tensor-product patch meshes.
 - Explicit non-RGB transparency-group blending spaces.
 - The advanced knockout interactions listed above.
 - Annotation display geometry that depends on `NoZoom`, `NoRotate` or
