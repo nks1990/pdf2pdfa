@@ -2,8 +2,8 @@
 
 This module maps PDF character codes/CIDs to the original embedded CFF
 CharStrings. It does not convert CFF outlines to TrueType and does not replace
-fonts. PDF Widths/DW/W remain authoritative for text advance; CFF FontMatrix
-maps CharString coordinates into text space for painting.
+fonts. PDF Widths/DW/W/DW2/W2 remain authoritative for text placement; CFF
+FontMatrix maps CharString coordinates into text space for painting.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from .font_encoding import FontEncodingError, parse_encoding
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .raster import Matrix, Path
 from .structure import decoded_stream_bytes, resolve
+from .vertical_metrics import VerticalMetric, VerticalMetrics, VerticalMetricsError
 
 
 class CFFPDFFontError(ValueError):
@@ -32,6 +33,7 @@ class CFFGlyphItem:
     width_1000: float
     word_space: bool = False
     cid: int | None = None
+    vertical_metric: VerticalMetric | None = None
 
 
 def _name(value: PDFObject | None) -> str:
@@ -217,9 +219,11 @@ class CFFPDFTextFont:
                 )
             cmap = _type0_cmap(self.doc, self.font)
             self.vertical = cmap.vertical
-            if self.vertical:
-                raise CFFPDFFontError("vertical Type0 CFF text requires owned vertical metrics")
             default_width, widths = _cid_widths(self.doc, cidfont)
+            try:
+                vertical_metrics = VerticalMetrics(self.doc, cidfont) if self.vertical else None
+            except VerticalMetricsError as exc:
+                raise CFFPDFFontError(f"CIDFont vertical metrics are invalid: {exc}") from exc
 
             def decode_type0(data: bytes) -> list[CFFGlyphItem]:
                 result: list[CFFGlyphItem] = []
@@ -227,13 +231,20 @@ class CFFPDFTextFont:
                     gid = self.cff.glyph_id_for_cid(cid)
                     if gid is None:
                         gid = 0
+                    horizontal_width = widths.get(cid, default_width)
+                    metric = (
+                        vertical_metrics.metric(cid, horizontal_width)
+                        if vertical_metrics is not None
+                        else None
+                    )
                     result.append(
                         CFFGlyphItem(
                             raw_code=raw_code,
                             glyph_id=gid,
-                            width_1000=widths.get(cid, default_width),
+                            width_1000=horizontal_width,
                             word_space=False,
                             cid=cid,
+                            vertical_metric=metric,
                         )
                     )
                 return result
