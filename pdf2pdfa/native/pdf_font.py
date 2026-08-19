@@ -12,6 +12,7 @@ from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .structure import decoded_stream_bytes, resolve
 from .truetype import TrueTypeOutlines
 from .ttf import FontParseError, SFNTFont
+from .vertical_metrics import VerticalMetric, VerticalMetrics, VerticalMetricsError
 
 
 class PDFFontError(ValueError):
@@ -25,6 +26,7 @@ class GlyphItem:
     width_1000: float
     word_space: bool = False
     cid: int | None = None
+    vertical_metric: VerticalMetric | None = None
 
 
 def _name(value: PDFObject | None) -> str:
@@ -214,22 +216,31 @@ class PDFTextFont:
             self.sfnt, self.outlines = _font_program(self.doc, descriptor)
             cmap = _type0_cmap(self.doc, self.font)
             self.vertical = cmap.vertical
-            if self.vertical:
-                raise PDFFontError("vertical Type0 text requires owned vertical-metrics renderer")
             default_width, widths = _cid_widths(self.doc, cidfont)
             gid_for_cid = _cid_to_gid(self.doc, cidfont)
+            try:
+                vertical_metrics = VerticalMetrics(self.doc, cidfont) if self.vertical else None
+            except VerticalMetricsError as exc:
+                raise PDFFontError(f"CIDFont vertical metrics are invalid: {exc}") from exc
 
             def decode_type0(data: bytes) -> list[GlyphItem]:
                 result: list[GlyphItem] = []
                 for raw_code, cid in cmap.decode(data):
                     gid = gid_for_cid(cid)
+                    horizontal_width = widths.get(cid, default_width)
+                    metric = (
+                        vertical_metrics.metric(cid, horizontal_width)
+                        if vertical_metrics is not None
+                        else None
+                    )
                     result.append(
                         GlyphItem(
                             raw_code=raw_code,
                             glyph_id=gid,
-                            width_1000=widths.get(cid, default_width),
+                            width_1000=horizontal_width,
                             word_space=False,
                             cid=cid,
+                            vertical_metric=metric,
                         )
                     )
                 return result
