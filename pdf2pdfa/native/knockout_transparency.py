@@ -3,8 +3,9 @@
 The implementation intentionally starts with the subset for which shape can be
 proved correct with the current raster primitives. Unsupported interactions
 (AIS=true, soft masks *inside* a knockout group, TK=false text, Type3 glyphs,
-patterns, masked images, and nested knockout execution) fail closed instead of
-degrading to ordinary alpha compositing.
+patterns, masked images, compound fill+stroke objects, Form transactions and
+nested knockout execution) fail closed instead of degrading to ordinary alpha
+compositing.
 """
 
 from __future__ import annotations
@@ -12,13 +13,14 @@ from __future__ import annotations
 from .knockout import KnockoutSurface
 from .nonisolated_transparency import _supported_group_color_space
 from .objects import PDFDict, PDFName, PDFStream
-from .page_render import RenderingError, UnsupportedRenderingError
+from .page_render import RenderingError, UnsupportedRenderingError, _resolve_resource
 from .raster import Color, Surface
 from .structure import resolve
 
 
 _ALPHA_TOLERANCE = 3.0 / 255.0
 _PATH_PAINT = {"S", "s", "f", "F", "f*", "B", "B*", "b", "b*"}
+_COMPOUND_PATH_PAINT = {"B", "B*", "b", "b*"}
 _TEXT_PAINT = {"Tj", "TJ", "'", '"'}
 
 
@@ -42,16 +44,25 @@ class KnockoutTransparencyRendererMixin:
             raise UnsupportedRenderingError(
                 "knockout transparency with /AIS true requires shape-alpha object transactions"
             )
+        if operator in _COMPOUND_PATH_PAINT:
+            raise UnsupportedRenderingError(
+                "combined fill+stroke path inside a knockout group requires one compound-object transaction"
+            )
         if operator in _TEXT_PAINT:
             if not self.text_knockout:  # type: ignore[attr-defined]
                 raise UnsupportedRenderingError(
                     "knockout transparency with /TK false requires whole-text-object shape transactions"
                 )
             text = getattr(self, "text", None)
-            font = getattr(getattr(text, "state", None), "font", None)
+            text_state = getattr(text, "state", None)
+            font = getattr(text_state, "font", None)
             if bool(getattr(font, "is_type3", False)):
                 raise UnsupportedRenderingError(
                     "Type3 text inside a knockout group requires glyph-level shape transactions"
+                )
+            if getattr(text_state, "render_mode", 0) in {2, 6}:
+                raise UnsupportedRenderingError(
+                    "fill+stroke text inside a knockout group requires one glyph-object transaction"
                 )
             if self._pattern_active(getattr(self, "_fill_pattern_space", None)) or self._pattern_active(
                 getattr(self, "_stroke_pattern_space", None)
@@ -80,6 +91,18 @@ class KnockoutTransparencyRendererMixin:
     def _inline_image(self, image) -> None:
         self._guard_knockout_paint("inline-image")
         return super()._inline_image(image)
+
+    def _xobject(self, name: str) -> None:
+        if self._in_knockout_execution():
+            value = _resolve_resource(self.doc, self.resources, "XObject", name)
+            if not isinstance(value, PDFStream):
+                raise RenderingError("XObject is not a stream")
+            subtype = resolve(self.doc, value.get("Subtype"))
+            if isinstance(subtype, PDFName) and subtype.value == "Form":
+                raise UnsupportedRenderingError(
+                    "Form XObject inside a knockout group requires one Form-object shape transaction"
+                )
+        return super()._xobject(name)
 
     def _draw_image(self, image, matrix) -> None:
         if self._in_knockout_execution():
