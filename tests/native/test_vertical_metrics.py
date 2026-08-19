@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 import pytest
 
 from pdf2pdfa.native.builder import PDFBuilder
@@ -73,7 +75,7 @@ def test_later_w2_range_has_deterministic_precedence_when_ranges_overlap():
         (PDFDict({"W2": [10, [-900, 300]]}), "multiple of 3"),
         (PDFDict({"W2": [20, 10, -900, 300, 700]}), "precedes"),
         (PDFDict({"W2": [-1, [-900, 300, 700]]}), "non-negative"),
-        (PDFDict({"W2": [10.5, [-900, 300, 700]]}), "integer CID"),
+        (PDFDict({"W2": [Decimal("10.5"), [-900, 300, 700]]}), "integer CID"),
     ],
 )
 def test_invalid_vertical_metrics_fail_closed(dictionary: PDFDict, message: str):
