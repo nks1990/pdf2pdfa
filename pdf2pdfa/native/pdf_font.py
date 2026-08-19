@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Iterable
 
-from .cmap import CIDCMap, CMapError
+from .cmap import CMapError
+from .cmap_registry import resolve_type0_cmap
 from .document import PDFDocument
-from .objects import PDFDict, PDFName, PDFObject, PDFRef, PDFStream
+from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .structure import decoded_stream_bytes, resolve
 from .truetype import TrueTypeOutlines
 from .ttf import FontParseError, SFNTFont
@@ -147,22 +147,11 @@ def _cid_to_gid(doc: PDFDocument, cidfont: PDFDict):
     raise PDFFontError("CIDToGIDMap is neither /Identity nor a stream")
 
 
-def _type0_cmap(doc: PDFDocument, font: PDFDict) -> CIDCMap:
-    encoding = resolve(doc, font.get("Encoding"))
-    if isinstance(encoding, PDFName):
-        if encoding.value == "Identity-H":
-            return CIDCMap.identity(vertical=False)
-        if encoding.value == "Identity-V":
-            return CIDCMap.identity(vertical=True)
-        raise PDFFontError(
-            f"predefined CMap /{encoding.value} is not yet bundled in the owned renderer"
-        )
-    if isinstance(encoding, PDFStream):
-        try:
-            return CIDCMap.parse(decoded_stream_bytes(doc, encoding, label="Type0 Encoding CMap"))
-        except CMapError as exc:
-            raise PDFFontError(f"Type0 Encoding CMap is invalid: {exc}") from exc
-    raise PDFFontError("Type0 font Encoding is missing or invalid")
+def _type0_cmap(doc: PDFDocument, font: PDFDict):
+    try:
+        return resolve_type0_cmap(doc, font.get("Encoding"))
+    except CMapError as exc:
+        raise PDFFontError(f"Type0 Encoding CMap is invalid/unsupported: {exc}") from exc
 
 
 class PDFTextFont:
