@@ -6,11 +6,15 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .document import PDFDocument
-from .font_encoding import FontEncodingError, parse_encoding
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .raster import Matrix, Path
 from .structure import decoded_stream_bytes, resolve
 from .type1 import Type1Error, Type1Font, UnsupportedType1Error
+from .type1_encoding import (
+    Type1EncodingError,
+    parse_type1_builtin_encoding,
+    parse_type1_pdf_encoding,
+)
 
 
 class Type1PDFFontError(ValueError):
@@ -65,13 +69,13 @@ def _widths(doc: PDFDocument, font: PDFDict) -> tuple[int, list[float], float]:
     return first, widths, missing
 
 
-def _program(doc: PDFDocument, descriptor: PDFDict) -> Type1Font:
+def _program(doc: PDFDocument, descriptor: PDFDict) -> tuple[Type1Font, bytes]:
     value = resolve(doc, descriptor.get("FontFile")) if descriptor.get("FontFile") is not None else None
     if not isinstance(value, PDFStream):
         raise Type1PDFFontError("Type1 font program is not embedded in FontDescriptor /FontFile")
     try:
         data = decoded_stream_bytes(doc, value, label="Type1 FontFile")
-        return Type1Font(data)
+        return Type1Font(data), data
     except (Type1Error, UnsupportedType1Error) as exc:
         raise Type1PDFFontError(f"embedded Type1 program is invalid/unsupported: {exc}") from exc
 
@@ -100,14 +104,15 @@ class Type1PDFTextFont:
             raise Type1PDFFontError(f"expected PDF /Type1 font, got /{subtype or 'unknown'}")
         self.base_font = _name(doc, self.font.get("BaseFont"))
         descriptor = _dict(doc, self.font.get("FontDescriptor"), "FontDescriptor")
-        self.program = _program(doc, descriptor)
+        self.program, program_bytes = _program(doc, descriptor)
         try:
-            self.encoding = parse_encoding(
+            built_in = parse_type1_builtin_encoding(program_bytes)
+            self.encoding = parse_type1_pdf_encoding(
                 doc,
                 self.font.get("Encoding"),
-                require_explicit=True,
+                built_in=built_in,
             )
-        except FontEncodingError as exc:
+        except Type1EncodingError as exc:
             raise Type1PDFFontError(str(exc)) from exc
         self.first_char, self.widths, self.missing_width = _widths(doc, self.font)
 
