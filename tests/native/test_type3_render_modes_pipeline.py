@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from pdf2pdfa.native.document import PDFDocument
+from pdf2pdfa.native.objects import PDFDict, PDFName
 from pdf2pdfa.native.pdfa import NativePDFAValidator
 from pdf2pdfa.native.pipeline import OwnedPDFAPipeline
+from pdf2pdfa.native.structure import resolve, walk_pages
+from pdf2pdfa.native.writer import PDFWriter
 
 from tests.native.test_type3_render import _pdf
 
@@ -23,14 +28,8 @@ def test_pdfa1_pipeline_preserves_type3_charproc_for_all_text_render_modes(
         )
     )
 
-    # _pdf deliberately has no ExtGState. Add transparency by rebuilding the
-    # single-page fixture with a small owned ExtGState rather than relying on
-    # an external renderer or opaque fixture.
-    from pdf2pdfa.native.document import PDFDocument
-    from pdf2pdfa.native.objects import PDFDict, PDFName
-    from pdf2pdfa.native.structure import resolve, walk_pages
-    from pdf2pdfa.native.writer import write_document
-
+    # _pdf deliberately has no ExtGState. Add transparency with the owned COS
+    # model and serialize it with the owned deterministic writer.
     doc = PDFDocument.open(source, repair=True)
     page = next(iter(walk_pages(doc)))
     resources = resolve(doc, page.get("Resources"))
@@ -40,13 +39,13 @@ def test_pdfa1_pipeline_preserves_type3_charproc_for_all_text_render_modes(
             "GS": PDFDict(
                 {
                     "Type": PDFName("ExtGState"),
-                    "ca": 0.5,
-                    "CA": 0.5,
+                    "ca": Decimal("0.5"),
+                    "CA": Decimal("0.5"),
                 }
             )
         }
     )
-    transparent_source = write_document(doc)
+    transparent_source = PDFWriter(doc).to_bytes()
 
     output = tmp_path / f"type3-tr-{render_mode}-archive.pdf"
     result = OwnedPDFAPipeline(
