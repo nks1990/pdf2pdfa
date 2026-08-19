@@ -1,34 +1,80 @@
 """Owned predefined-CMap registry and Type0 encoding resolver.
 
-Only CMaps whose mapping program is implemented in this repository may be
-resolved by name.  Identity-H/V are algorithmic and therefore available now.
-Other predefined Adobe CMaps remain fail-closed until their mapping tables are
-added as owned source/data.
+Identity-H/V are algorithmic.  Other names are available only when their
+compiled mapping data is versioned in :mod:`predefined_cmap_data`.  No system
+CMap lookup, network access or external font/PDF library is ever used.
 
 Embedded CMap streams may inherit a base through either their stream dictionary
-`/UseCMap` entry or a content-stream `/Name usecmap` operator.  Recursion and
+`/UseCMap` entry or a content-stream `/Name usecmap` operator. Recursion and
 cycles are bounded explicitly.
 """
 
 from __future__ import annotations
 
-from .cmap import CIDCMap, CMapError
+from functools import lru_cache
+
+from .cmap import CIDCMap, CIDRange, CMapError, CodeSpace
 from .document import PDFDocument
 from .objects import PDFName, PDFObject, PDFStream
+from .predefined_cmap_data import CMAP_DATA
 from .structure import decoded_stream_bytes, resolve
 
 
 _MAX_CMAP_DEPTH = 32
 
 
+def _compiled_cmap(name: str, stack: tuple[str, ...]) -> CIDCMap:
+    if name in stack:
+        chain = " -> ".join((*stack, name))
+        raise CMapError(f"compiled predefined CMap inheritance cycle: {chain}")
+    raw = CMAP_DATA.get(name)
+    if raw is None:
+        raise CMapError(
+            f"predefined CMap /{name} is not present in the owned CMap registry"
+        )
+    if len(stack) >= _MAX_CMAP_DEPTH:
+        raise CMapError(f"compiled CMap inheritance exceeds {_MAX_CMAP_DEPTH} levels")
+
+    base_name = raw.get("base")
+    base = None
+    if base_name is not None:
+        if not isinstance(base_name, str):
+            raise CMapError(f"compiled CMap /{name} has invalid base metadata")
+        base = _compiled_cmap(base_name, (*stack, name))
+
+    def spaces():
+        for item in raw.get("codespaces", ()):
+            if not isinstance(item, tuple) or len(item) != 3:
+                raise CMapError(f"compiled CMap /{name} has malformed codespace data")
+            yield CodeSpace(int(item[0]), int(item[1]), int(item[2]))
+
+    def ranges(key: str):
+        for item in raw.get(key, ()):
+            if not isinstance(item, tuple) or len(item) != 4:
+                raise CMapError(f"compiled CMap /{name} has malformed {key} data")
+            yield CIDRange(int(item[0]), int(item[1]), int(item[2]), int(item[3]))
+
+    vertical = raw.get("vertical")
+    if not isinstance(vertical, bool):
+        raise CMapError(f"compiled CMap /{name} has invalid vertical metadata")
+
+    return CIDCMap(
+        codespaces=spaces(),
+        cid_ranges=ranges("cid_ranges"),
+        notdef_ranges=ranges("notdef_ranges"),
+        vertical=vertical,
+        base=base,
+        name=name,
+    )
+
+
+@lru_cache(maxsize=256)
 def predefined_cmap(name: str) -> CIDCMap:
     if name == "Identity-H":
         return CIDCMap.identity(vertical=False)
     if name == "Identity-V":
         return CIDCMap.identity(vertical=True)
-    raise CMapError(
-        f"predefined CMap /{name} is not present in the owned CMap registry"
-    )
+    return _compiled_cmap(name, ())
 
 
 def _resolve_stream_cmap(
