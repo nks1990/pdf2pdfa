@@ -13,6 +13,7 @@ from .annotation_render import AnnotationAppearanceRendererMixin
 from .ccitt_render import CCITTImageRendererMixin
 from .cff_render import CFFTextPageRendererMixin
 from .document import PDFDocument
+from .knockout_transparency import KnockoutTransparencyRendererMixin
 from .nonisolated_transparency import NonIsolatedTransparencyRendererMixin
 from .page_render import RenderedPage
 from .pattern_dispatch import CanonicalPatternShadingMixin
@@ -32,6 +33,7 @@ from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
 class FullOwnedPageRenderer(
     AnnotationAppearanceRendererMixin,
     CCITTImageRendererMixin,
+    KnockoutTransparencyRendererMixin,
     PatternStrokeRendererMixin,
     UncoloredPatternSafetyMixin,
     UncoloredTilingPatternRendererMixin,
