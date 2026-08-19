@@ -17,6 +17,7 @@ from .nonisolated_transparency import NonIsolatedTransparencyRendererMixin
 from .page_render import RenderedPage
 from .pattern_dispatch import CanonicalPatternShadingMixin
 from .pattern_render import PatternShadingRendererMixin
+from .pattern_stroke import PatternStrokeRendererMixin
 from .shading_render import ShadingRendererMixin
 from .structure import walk_pages
 from .tiling_pattern import ColoredTilingPatternRendererMixin
@@ -30,6 +31,7 @@ from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
 class FullOwnedPageRenderer(
     AnnotationAppearanceRendererMixin,
     CCITTImageRendererMixin,
+    PatternStrokeRendererMixin,
     UncoloredPatternSafetyMixin,
     UncoloredTilingPatternRendererMixin,
     ColoredTilingPatternRendererMixin,

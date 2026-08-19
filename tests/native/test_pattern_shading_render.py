@@ -86,10 +86,7 @@ def _pixel(page, x: int, y_from_bottom: int):
 
 def test_shading_pattern_fills_path_and_clips_to_path_geometry():
     page = render_page_full(
-        _pdf(
-            b"/Pattern cs /P scn 10 10 80 20 re f\n",
-            pattern=_pattern(),
-        ),
+        _pdf(b"/Pattern cs /P scn 10 10 80 20 re f\n", pattern=_pattern()),
         dpi=72,
     )
     outside = _pixel(page, 5, 20)
@@ -101,8 +98,6 @@ def test_shading_pattern_fills_path_and_clips_to_path_geometry():
 
 
 def test_pattern_matrix_is_composed_before_page_ctm():
-    # Pattern shading axis is 0..50. A Pattern Matrix with x2 scale makes it
-    # cover the 0..100 user-space page.
     page = render_page_full(
         _pdf(
             b"/Pattern cs /P scn 0 0 100 40 re f\n",
@@ -115,10 +110,7 @@ def test_pattern_matrix_is_composed_before_page_ctm():
 
 
 def test_pattern_fill_respects_evenodd_hole():
-    content = (
-        b"/Pattern cs /P scn "
-        b"0 0 100 40 re 30 10 40 20 re f*\n"
-    )
+    content = b"/Pattern cs /P scn 0 0 100 40 re 30 10 40 20 re f*\n"
     page = render_page_full(_pdf(content, pattern=_pattern()), dpi=72)
     painted = _pixel(page, 10, 20)
     hole = _pixel(page, 50, 20)
@@ -163,10 +155,7 @@ def test_pattern_extgstate_alpha_is_applied():
 
 
 def test_combined_pattern_fill_and_solid_stroke_preserves_stroke():
-    content = (
-        b"0 0 0 RG 2 w /Pattern cs /P scn "
-        b"10 10 80 20 re B\n"
-    )
+    content = b"0 0 0 RG 2 w /Pattern cs /P scn 10 10 80 20 re B\n"
     page = render_page_full(_pdf(content, pattern=_pattern()), dpi=72)
     center = _pixel(page, 50, 20)
     edge = _pixel(page, 10, 20)
@@ -174,18 +163,23 @@ def test_combined_pattern_fill_and_solid_stroke_preserves_stroke():
     assert edge.r < 0.2 and edge.g < 0.2 and edge.b < 0.2
 
 
-def test_pattern_stroke_remains_fail_closed():
-    with pytest.raises(UnsupportedPatternError, match="pattern-colored strokes"):
-        render_page_full(
-            _pdf(
-                b"/Pattern CS /P SCN 10 10 80 20 re S\n",
-                pattern=_pattern(),
-            ),
-            dpi=72,
-        )
+def test_shading_pattern_strokes_path_geometry():
+    page = render_page_full(
+        _pdf(
+            b"8 w /Pattern CS /P SCN 10 20 m 90 20 l S\n",
+            pattern=_pattern(),
+        ),
+        dpi=72,
+    )
+    left = _pixel(page, 15, 20)
+    right = _pixel(page, 85, 20)
+    outside = _pixel(page, 50, 5)
+    assert left.r > left.b
+    assert right.b > right.r
+    assert outside.r > 0.99 and outside.g > 0.99 and outside.b > 0.99
 
 
-def test_tiling_pattern_remains_explicitly_separate():
+def test_colored_tiling_pattern_is_reachable_through_canonical_fill_dispatch():
     tiling = PDFStream(
         PDFDict(
             {
@@ -199,13 +193,14 @@ def test_tiling_pattern_remains_explicitly_separate():
                 "Resources": PDFDict(),
             }
         ),
-        b"0 0 10 10 re f\n",
+        b"1 0 0 rg 0 0 5 10 re f 0 0 1 rg 5 0 5 10 re f\n",
     )
-    with pytest.raises(UnsupportedPatternError, match="PatternType 2"):
-        render_page_full(
-            _pdf(b"/Pattern cs /P scn 0 0 100 40 re f\n", pattern=tiling),
-            dpi=72,
-        )
+    page = render_page_full(
+        _pdf(b"/Pattern cs /P scn 0 0 100 40 re f\n", pattern=tiling),
+        dpi=72,
+    )
+    assert _pixel(page, 2, 20).r > 0.9
+    assert _pixel(page, 7, 20).b > 0.9
 
 
 def test_uncolored_pattern_space_cannot_be_used_with_shading_pattern():
@@ -214,16 +209,11 @@ def test_uncolored_pattern_space_cannot_be_used_with_shading_pattern():
     resources = PDFDict(
         {
             "Pattern": PDFDict({"P": pattern_ref}),
-            "ColorSpace": PDFDict(
-                {"PCS": [PDFName("Pattern"), PDFName("DeviceRGB")]}
-            ),
+            "ColorSpace": PDFDict({"PCS": [PDFName("Pattern"), PDFName("DeviceRGB")]})
         }
     )
     contents = builder.add(
-        PDFStream(
-            PDFDict(),
-            b"/PCS cs 1 0 0 /P scn 0 0 100 40 re f\n",
-        )
+        PDFStream(PDFDict(), b"/PCS cs 1 0 0 /P scn 0 0 100 40 re f\n")
     )
     pages = PDFDict({"Type": PDFName("Pages"), "Count": 1, "Kids": []})
     pages_ref = builder.add(pages)
