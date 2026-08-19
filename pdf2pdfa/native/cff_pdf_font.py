@@ -12,11 +12,11 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .cff import CFFError, CFFFont, UnsupportedCFFError
-from .cmap import CIDCMap, CMapError
+from .cmap import CMapError
+from .cmap_registry import resolve_type0_cmap
 from .document import PDFDocument
 from .font_encoding import FontEncodingError, parse_encoding
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
-from .pdf_font import GlyphItem
 from .raster import Matrix, Path
 from .structure import decoded_stream_bytes, resolve
 
@@ -110,22 +110,13 @@ def _cid_widths(doc: PDFDocument, cidfont: PDFDict) -> tuple[float, dict[int, fl
     return default, widths
 
 
-def _type0_cmap(doc: PDFDocument, font: PDFDict) -> CIDCMap:
-    encoding = resolve(doc, font.get("Encoding"))
-    if isinstance(encoding, PDFName):
-        if encoding.value == "Identity-H":
-            return CIDCMap.identity(vertical=False)
-        if encoding.value == "Identity-V":
-            return CIDCMap.identity(vertical=True)
+def _type0_cmap(doc: PDFDocument, font: PDFDict):
+    try:
+        return resolve_type0_cmap(doc, font.get("Encoding"))
+    except CMapError as exc:
         raise CFFPDFFontError(
-            f"predefined CMap /{encoding.value} is not yet bundled in the owned renderer"
-        )
-    if isinstance(encoding, PDFStream):
-        try:
-            return CIDCMap.parse(decoded_stream_bytes(doc, encoding, label="Type0 Encoding CMap"))
-        except CMapError as exc:
-            raise CFFPDFFontError(f"Type0 Encoding CMap is invalid: {exc}") from exc
-    raise CFFPDFFontError("Type0 font Encoding is missing or invalid")
+            f"Type0 Encoding CMap is invalid/unsupported: {exc}"
+        ) from exc
 
 
 def _cff_program(doc: PDFDocument, descriptor: PDFDict, expected_subtype: str) -> CFFFont:
@@ -261,10 +252,6 @@ class CFFPDFTextFont:
     def glyph_matrix(self, gid: int) -> Matrix:
         per_fd = self.cff.fd_font_matrix(gid)
         if per_fd is not None:
-            # CFF1 permits per-FD matrices in CID-keyed programs. Until the
-            # exact top/FD concatenation rules are represented explicitly in
-            # this adapter, refuse the rare case instead of painting a glyph at
-            # the wrong scale/origin.
             raise CFFPDFFontError(
                 "CID-keyed CFF per-FD FontMatrix requires owned matrix-composition support"
             )

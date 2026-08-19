@@ -1,16 +1,24 @@
-"""Owned parser for the CMap subset required to map Type0 codes to CIDs."""
+"""Owned parser for CMaps that map Type0 character codes to CIDs.
+
+The implementation supports local codespaces/cidchar/cidrange mappings plus a
+single inherited base CMap.  A base may come from a PDF stream `/UseCMap`
+dictionary entry or a PostScript `/Name usecmap` operator.  Child mappings take
+precedence over the base.  Named CMaps are resolved only through an explicit
+owned registry callback; unknown names never fall back to a system CMap.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Iterable
+from typing import Callable, Iterable
 
 
 class CMapError(ValueError):
     pass
 
 
+CMapRegistry = Callable[[str], "CIDCMap"]
 _HEX = re.compile(rb"<([0-9A-Fa-f]+)>")
 
 
@@ -25,10 +33,13 @@ def _hex(token: bytes) -> bytes:
 
 
 def _tokens(data: bytes) -> list[bytes]:
-    # CMap syntax is PostScript-like. For CID mapping we only need names,
-    # integers, arrays and hex strings; literal strings/procedures can be skipped.
+    # CMap syntax is PostScript-like. For CID mapping we need names, integers,
+    # arrays and hex strings. Procedures/literal strings are intentionally not
+    # evaluated by this owned subset.
     data = re.sub(rb"%[^\r\n]*", b" ", data)
-    pattern = re.compile(rb"<[^>]*>|\[|\]|/[A-Za-z0-9_.+-]+|-?\d+|[A-Za-z][A-Za-z0-9]*")
+    pattern = re.compile(
+        rb"<[^>]*>|\[|\]|/[A-Za-z0-9_.+-]+|-?\d+|[A-Za-z][A-Za-z0-9_.+-]*"
+    )
     return pattern.findall(data)
 
 
@@ -39,7 +50,10 @@ class CodeSpace:
     length: int
 
     def accepts(self, raw: bytes) -> bool:
-        return len(raw) == self.length and self.low <= int.from_bytes(raw, "big") <= self.high
+        return (
+            len(raw) == self.length
+            and self.low <= int.from_bytes(raw, "big") <= self.high
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,18 +76,31 @@ class CIDCMap:
     def __init__(
         self,
         *,
-        codespaces: Iterable[CodeSpace],
+        codespaces: Iterable[CodeSpace] = (),
         cid_chars: dict[bytes, int] | None = None,
         cid_ranges: Iterable[CIDRange] = (),
-        vertical: bool = False,
+        vertical: bool | None = None,
+        base: "CIDCMap | None" = None,
+        name: str = "",
     ) -> None:
-        self.codespaces = tuple(codespaces)
-        if not self.codespaces:
-            raise CMapError("CMap has no codespace ranges")
+        self.local_codespaces = tuple(codespaces)
         self.cid_chars = dict(cid_chars or {})
         self.cid_ranges = tuple(cid_ranges)
-        self.vertical = vertical
-        self._lengths = tuple(sorted({space.length for space in self.codespaces}, reverse=True))
+        self.base = base
+        self.name = name
+        if not self.local_codespaces and base is None:
+            raise CMapError("CMap has no codespace ranges and no base CMap")
+        self.vertical = base.vertical if vertical is None and base is not None else bool(vertical)
+
+        inherited = base.codespaces if base is not None else ()
+        combined: list[CodeSpace] = []
+        for item in (*self.local_codespaces, *inherited):
+            if item not in combined:
+                combined.append(item)
+        self.codespaces = tuple(combined)
+        self._lengths = tuple(
+            sorted({space.length for space in self.codespaces}, reverse=True)
+        )
 
     @classmethod
     def identity(cls, *, vertical: bool = False) -> "CIDCMap":
@@ -81,26 +108,67 @@ class CIDCMap:
             codespaces=[CodeSpace(0x0000, 0xFFFF, 2)],
             cid_ranges=[CIDRange(0x0000, 0xFFFF, 2, 0)],
             vertical=vertical,
+            name="Identity-V" if vertical else "Identity-H",
         )
 
     @classmethod
-    def parse(cls, data: bytes) -> "CIDCMap":
+    def parse(
+        cls,
+        data: bytes,
+        *,
+        registry: CMapRegistry | None = None,
+        base: "CIDCMap | None" = None,
+        name: str = "",
+    ) -> "CIDCMap":
         tokens = _tokens(data)
         codespaces: list[CodeSpace] = []
         cid_chars: dict[bytes, int] = {}
         ranges: list[CIDRange] = []
-        vertical = False
+        vertical: bool | None = None
+        content_base: CIDCMap | None = None
         index = 0
+
         while index < len(tokens):
             token = tokens[index]
-            if token == b"/WMode" and index + 2 < len(tokens):
+
+            if token == b"/WMode":
+                if index + 1 >= len(tokens):
+                    raise CMapError("truncated /WMode")
                 try:
-                    vertical = int(tokens[index + 1]) == 1
-                except ValueError:
-                    pass
+                    mode = int(tokens[index + 1])
+                except ValueError as exc:
+                    raise CMapError("/WMode is not an integer") from exc
+                if mode not in (0, 1):
+                    raise CMapError("/WMode shall be 0 or 1")
+                vertical = mode == 1
+                index += 2
+                continue
+
+            if token == b"usecmap":
+                if index == 0 or not tokens[index - 1].startswith(b"/"):
+                    raise CMapError("usecmap requires a preceding CMap name")
+                if content_base is not None:
+                    raise CMapError("CMap contains more than one usecmap base")
+                if base is not None:
+                    raise CMapError(
+                        "CMap defines both stream /UseCMap and content usecmap bases"
+                    )
+                if registry is None:
+                    raise CMapError("CMap usecmap requires an owned predefined-CMap registry")
+                base_name = tokens[index - 1][1:].decode("latin-1")
+                try:
+                    content_base = registry(base_name)
+                except CMapError:
+                    raise
+                except Exception as exc:
+                    raise CMapError(f"cannot resolve base CMap /{base_name}: {exc}") from exc
                 index += 1
-            if token.isdigit() and index + 1 < len(tokens):
+                continue
+
+            if token.lstrip(b"-").isdigit() and index + 1 < len(tokens):
                 count = int(token)
+                if count < 0:
+                    raise CMapError("CMap block count cannot be negative")
                 operator = tokens[index + 1]
                 if operator == b"begincodespacerange":
                     index += 2
@@ -111,13 +179,11 @@ class CIDCMap:
                         high_raw = _hex(tokens[index + 1])
                         if len(low_raw) != len(high_raw):
                             raise CMapError("codespace bounds have different lengths")
-                        codespaces.append(
-                            CodeSpace(
-                                int.from_bytes(low_raw, "big"),
-                                int.from_bytes(high_raw, "big"),
-                                len(low_raw),
-                            )
-                        )
+                        low = int.from_bytes(low_raw, "big")
+                        high = int.from_bytes(high_raw, "big")
+                        if high < low:
+                            raise CMapError("codespace high bound precedes low bound")
+                        codespaces.append(CodeSpace(low, high, len(low_raw)))
                         index += 2
                     continue
                 if operator == b"begincidchar":
@@ -130,6 +196,8 @@ class CIDCMap:
                             cid = int(tokens[index + 1])
                         except ValueError as exc:
                             raise CMapError("cidchar destination is not an integer") from exc
+                        if cid < 0:
+                            raise CMapError("cidchar destination cannot be negative")
                         cid_chars[raw] = cid
                         index += 2
                     continue
@@ -144,6 +212,8 @@ class CIDCMap:
                             cid = int(tokens[index + 2])
                         except ValueError as exc:
                             raise CMapError("cidrange destination is not an integer") from exc
+                        if cid < 0:
+                            raise CMapError("cidrange destination cannot be negative")
                         if len(low_raw) != len(high_raw):
                             raise CMapError("cidrange bounds have different lengths")
                         start = int.from_bytes(low_raw, "big")
@@ -154,20 +224,27 @@ class CIDCMap:
                         index += 3
                     continue
             index += 1
+
+        selected_base = content_base or base
         return cls(
             codespaces=codespaces,
             cid_chars=cid_chars,
             cid_ranges=ranges,
             vertical=vertical,
+            base=selected_base,
+            name=name,
         )
 
     def code_to_cid(self, raw: bytes) -> int | None:
+        # Child CMap differences are authoritative over inherited mappings.
         if raw in self.cid_chars:
             return self.cid_chars[raw]
         for item in self.cid_ranges:
             cid = item.lookup(raw)
             if cid is not None:
                 return cid
+        if self.base is not None:
+            return self.base.code_to_cid(raw)
         return None
 
     def decode(self, data: bytes) -> list[tuple[bytes, int]]:
@@ -183,11 +260,15 @@ class CIDCMap:
                     continue
                 cid = self.code_to_cid(raw)
                 if cid is None:
-                    raise CMapError(f"CMap contains no CID mapping for code <{raw.hex()}>")
+                    raise CMapError(
+                        f"CMap contains no CID mapping for code <{raw.hex()}>"
+                    )
                 output.append((raw, cid))
                 position += length
                 matched = True
                 break
             if not matched:
-                raise CMapError(f"byte sequence at offset {position} is outside CMap codespaces")
+                raise CMapError(
+                    f"byte sequence at offset {position} is outside CMap codespaces"
+                )
         return output

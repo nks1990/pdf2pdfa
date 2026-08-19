@@ -13,7 +13,9 @@ an end-to-end regression.
 - embedded Type1 PFA/PFB `/FontFile` programs rendered directly from owned eexec/CharString outlines, including PFA/PFB, local Subrs, PDF-authoritative Widths, explicit PDF encodings, built-in StandardEncoding/custom 256-array encoding fallback and Differences semantics;
 - Type1 fill/stroke/clip render modes through the same owned text-state machine used by TrueType/CFF, including Type1 inside transparency groups and annotation appearances;
 - embedded CFF1 `/Type1C` simple fonts using owned WinAnsi/Differences mapping;
-- embedded CID-keyed `/CIDFontType0C` through Identity-H or explicit owned CMap streams;
+- embedded CID-keyed `/CIDFontType0C` and CIDFontType2 through the shared owned Type0 CMap resolver;
+- Identity-H/V and embedded CMaps with local codespace/cidchar/cidrange mappings;
+- embedded CMap inheritance through stream `/UseCMap` or content `/Name usecmap`, including child-over-base mapping precedence, inherited codespaces/WMode and cycle/depth guards;
 - CFF text fill/stroke/clip render modes through the same owned text-state machine;
 - raw/general-filtered images, baseline JPEG and CCITT Group 3/4/MR fax images;
 - image masks and soft masks;
@@ -40,7 +42,7 @@ an end-to-end regression.
 - Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
 - CFF CID per-FD FontMatrix composition;
 - Type0 vertical metrics/text;
-- predefined non-Identity CMaps not yet bundled by the owned CMap layer;
+- predefined non-Identity Adobe CMaps (Japan1/GB1/CNS1/Korea1 families) until their mapping data is added as owned repository resources;
 - JPX/JPEG 2000 and JBIG2 image codecs;
 - knockout transparency groups;
 - transparency groups with an explicit non-RGB blending color space;
