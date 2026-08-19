@@ -1,10 +1,10 @@
 """Owned knockout transparency-group compositor.
 
 The implementation intentionally starts with the subset for which shape can be
-proved correct with the current raster primitives.  Unsupported interactions
+proved correct with the current raster primitives. Unsupported interactions
 (AIS=true, soft masks *inside* a knockout group, TK=false text, Type3 glyphs,
-patterns, and nested knockout execution) fail closed instead of degrading to
-ordinary alpha compositing.
+patterns, masked images, and nested knockout execution) fail closed instead of
+degrading to ordinary alpha compositing.
 """
 
 from __future__ import annotations
@@ -31,6 +31,10 @@ class KnockoutTransparencyRendererMixin:
         surface = getattr(self, "surface", None)
         return isinstance(surface, KnockoutSurface)
 
+    @staticmethod
+    def _pattern_active(value) -> bool:
+        return bool(getattr(value, "active", False))
+
     def _guard_knockout_paint(self, operator: str) -> None:
         if not self._in_knockout_execution():
             return
@@ -49,14 +53,20 @@ class KnockoutTransparencyRendererMixin:
                 raise UnsupportedRenderingError(
                     "Type3 text inside a knockout group requires glyph-level shape transactions"
                 )
+            if self._pattern_active(getattr(self, "_fill_pattern_space", None)) or self._pattern_active(
+                getattr(self, "_stroke_pattern_space", None)
+            ):
+                raise UnsupportedRenderingError(
+                    "pattern-colored text inside a knockout group requires text-object pattern shape transactions"
+                )
         if operator in _PATH_PAINT:
             fill = operator in {"f", "F", "f*", "B", "B*", "b", "b*"}
             stroke = operator in {"S", "s", "B", "B*", "b", "b*"}
-            if fill and bool(getattr(getattr(self, "_fill_pattern_space", None), "active", False)):
+            if fill and self._pattern_active(getattr(self, "_fill_pattern_space", None)):
                 raise UnsupportedRenderingError(
                     "pattern fills inside a knockout group require pattern-object shape transactions"
                 )
-            if stroke and bool(getattr(getattr(self, "_stroke_pattern_space", None), "active", False)):
+            if stroke and self._pattern_active(getattr(self, "_stroke_pattern_space", None)):
                 raise UnsupportedRenderingError(
                     "pattern strokes inside a knockout group require pattern-object shape transactions"
                 )
@@ -70,6 +80,18 @@ class KnockoutTransparencyRendererMixin:
     def _inline_image(self, image) -> None:
         self._guard_knockout_paint("inline-image")
         return super()._inline_image(image)
+
+    def _draw_image(self, image, matrix) -> None:
+        if self._in_knockout_execution():
+            # After image decoding, alpha alone no longer tells us whether the
+            # source came from an opacity SMask or from a shape/stencil mask.
+            # Until the decoder carries that provenance, only fully opaque
+            # images have unambiguous knockout shape semantics.
+            if any(alpha != 255 for alpha in image.rgba[3::4]):
+                raise UnsupportedRenderingError(
+                    "masked/transparent images inside a knockout group require image-alpha provenance"
+                )
+        return super()._draw_image(image, matrix)
 
     def _extgstate(self, name: str) -> None:
         if self._in_knockout_execution():
