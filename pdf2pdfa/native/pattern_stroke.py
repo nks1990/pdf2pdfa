@@ -1,15 +1,15 @@
 """Owned Pattern stroking through the canonical pattern-fill painters.
 
-PDF patterns are valid stroking colors as well as nonstroking colors.  This
-mixin does not implement a second shading/tiling engine.  It first rasterizes
+PDF patterns are valid stroking colors as well as nonstroking colors. This
+mixin does not implement a second shading/tiling engine. It first rasterizes
 the exact affine PDF stroke geometry to an alpha coverage mask using the same
-owned dash/cap/join/hairline machinery as ordinary strokes.  That mask becomes
+owned dash/cap/join/hairline machinery as ordinary strokes. That mask becomes
 a temporary clip and the existing PatternType 1/2 fill dispatcher paints
 through it.
 
 While painting the stroke, stroking pattern/base-color state and ``CA`` are
 projected temporarily onto the fill-side fields consumed by the existing
-pattern painters.  They are restored immediately afterwards, so q/Q and later
+pattern painters. They are restored immediately afterwards, so q/Q and later
 fills observe the original independent graphics state.
 """
 
@@ -145,6 +145,14 @@ class PatternStrokeRendererMixin:
         # W/W* applies to the same terminated path before either fill or stroke.
         self._apply_pending_clip()  # type: ignore[attr-defined]
 
+        # PatternType 1 fill painters are allowed to consume/reset the current
+        # path as part of their own completion semantics. Compound B/b must
+        # nevertheless stroke the exact same path object afterwards, so keep a
+        # geometry/affine snapshot across the fill phase.
+        compound_path = copy.deepcopy(self.path)  # type: ignore[attr-defined]
+        compound_path_ctm = getattr(self, "_path_ctm", None)
+        compound_mixed_path_ctm = getattr(self, "_mixed_path_ctm", False)
+
         if fill:
             if self._fill_pattern_space.active:  # type: ignore[attr-defined]
                 self._paint_pattern_fill(even_odd=even_odd)  # type: ignore[attr-defined]
@@ -161,6 +169,10 @@ class PatternStrokeRendererMixin:
                     blend_mode=state.blend_mode,
                 )
 
+        self.path = compound_path  # type: ignore[attr-defined]
+        if hasattr(self, "_path_ctm"):
+            self._path_ctm = compound_path_ctm  # type: ignore[attr-defined]
+            self._mixed_path_ctm = compound_mixed_path_ctm  # type: ignore[attr-defined]
         self._paint_selected_pattern_stroke()
 
         self.path.clear()  # type: ignore[attr-defined]
