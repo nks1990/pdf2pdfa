@@ -16,6 +16,7 @@ an end-to-end regression.
 - embedded CID-keyed `/CIDFontType0C` and CIDFontType2 through the shared owned Type0 CMap resolver;
 - Identity-H/V and embedded CMaps with local codespace/cidchar/cidrange mappings;
 - embedded CMap inheritance through stream `/UseCMap` or content `/Name usecmap`, including child-over-base mapping precedence, inherited codespaces/WMode and cycle/depth guards;
+- Type0 writing mode 1 for CIDFontType2 and CIDFontType0C, including shared DW2/W2 parsing, compact range metrics, vertical origin placement, Y displacement and vertical TJ corrections;
 - CFF text fill/stroke/clip render modes through the same owned text-state machine;
 - raw/general-filtered images, baseline JPEG and CCITT Group 3/4/MR fax images;
 - image masks and soft masks;
@@ -41,7 +42,6 @@ an end-to-end regression.
 - Type1 `seac` composites and `callothersubr`/Flex glyph programs;
 - Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
 - CFF CID per-FD FontMatrix composition;
-- Type0 vertical metrics/text;
 - predefined non-Identity Adobe CMaps (Japan1/GB1/CNS1/Korea1 families) until their mapping data is added as owned repository resources;
 - JPX/JPEG 2000 and JBIG2 image codecs;
 - knockout transparency groups;
