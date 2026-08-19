@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pdf2pdfa.native.knockout import (
+    KnockoutSurface,
     ShapeAccumulator,
     knockout_pixel,
     knockout_surface,
@@ -67,3 +68,30 @@ def test_knockout_surface_respects_destination_clip_without_changing_source_alph
 def test_knockout_surface_rejects_mismatched_shape_plane():
     with pytest.raises(ValueError, match="shape dimensions"):
         knockout_surface(Surface(2, 2), Surface(2, 2), b"\xff")
+
+
+def test_knockout_surface_uses_fixed_backdrop_for_each_new_object():
+    backdrop = Surface(1, 1, background=Color(0, 0, 1, 1))
+    surface = KnockoutSurface(backdrop)
+
+    surface.composite_pixel(0, 0, Color(1, 0, 0, 0.5))
+    _approx_color(surface.get_pixel(0, 0), Color(0.5, 0, 0.5, 1), tolerance=2 / 255)
+
+    surface.composite_pixel(0, 0, Color(0, 1, 0, 0.5))
+    # The green object is painted against the immutable blue group backdrop,
+    # then replaces the previous red sibling over its full shape.
+    _approx_color(surface.get_pixel(0, 0), Color(0, 0.5, 0.5, 1), tolerance=2 / 255)
+    assert surface.shape.samples[0] == 255
+
+
+def test_knockout_surface_antialiased_shape_is_independent_of_object_opacity():
+    backdrop = Surface(1, 1, background=Color(0, 0, 0, 0))
+    surface = KnockoutSurface(backdrop)
+    surface.composite_pixel(
+        0,
+        0,
+        Color(1, 0, 0, 0.25),
+        coverage=0.5,
+    )
+    # AIS=false: shape is geometry coverage (0.5), not 0.5 * object opacity.
+    assert surface.shape.samples[0] == pytest.approx(128, abs=1)
