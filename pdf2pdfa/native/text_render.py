@@ -242,24 +242,19 @@ class TrueTypeTextRenderer:
     def _paint_item(self, item: object, style: TextPaintStyle) -> None:
         font = self._require_font()
         if isinstance(font, Type3TextFont):
-            mode = self.state.render_mode
-            if mode == 3:
-                return
-            if mode != 0:
-                raise TextRenderError(
-                    "Type3 text rendering modes other than fill(0) and invisible(3) "
-                    "require dedicated owned stroke/clip semantics"
-                )
             if not isinstance(item, Type3GlyphItem):
                 raise TextRenderError("Type3 decoder returned an invalid glyph item")
             if self.type3_painter is None:
                 raise TextRenderError("Type3 glyph requires page-interpreter callback")
+            # PDF text rendering mode is deliberately passed only as context:
+            # it has no effect on Type3 glyph painting or text clipping. The
+            # CharProc itself is authoritative for painting semantics.
             self.type3_painter(
                 font,
                 item,
                 self._type3_transform(font),
                 style,
-                mode,
+                self.state.render_mode,
             )
             return
 
