@@ -16,6 +16,7 @@ an end-to-end regression.
 - Type1 fill/stroke/clip render modes through the same owned text-state machine used by TrueType/CFF, including Type1 inside transparency groups and annotation appearances;
 - embedded CFF1 `/Type1C` simple fonts using owned WinAnsi/Differences mapping;
 - embedded CID-keyed `/CIDFontType0C` and CIDFontType2 through the shared owned Type0 CMap resolver;
+- CFF CID per-FD FontMatrix selection/composition through FDSelect, including top-linear × FD matrix and reference-compatible FD offset transformation;
 - Identity-H/V and embedded CMaps with local codespace/cidchar/cidrange mappings;
 - embedded CMap inheritance through stream `/UseCMap` or content `/Name usecmap`, including child-over-base mapping precedence, inherited codespaces/WMode and cycle/depth guards;
 - Type0 writing mode 1 for CIDFontType2 and CIDFontType0C, including shared DW2/W2 parsing, compact range metrics, vertical origin placement, Y displacement and vertical TJ corrections;
@@ -43,7 +44,6 @@ an end-to-end regression.
 - PaintType 2 cell soft masks/transparency groups and intrinsic-color content;
 - proprietary/Multiple-Master Type1 OtherSubrs that require PostScript/MM semantics beyond the standard Flex/hint set;
 - Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
-- CFF CID per-FD FontMatrix composition;
 - predefined non-Identity Adobe CMaps (Japan1/GB1/CNS1/Korea1 families) until their mapping data is added as owned repository resources;
 - JPX/JPEG 2000 and JBIG2 image codecs;
 - knockout transparency groups;

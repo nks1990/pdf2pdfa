@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import pytest
-
 from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.cff_render import CFFTextPageRendererMixin
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
 from pdf2pdfa.native.owned_renderer import FullOwnedPageRenderer, render_page_full
-from pdf2pdfa.native.page_render import RenderingError
 
 
 def _index(items: list[bytes]) -> bytes:
@@ -273,7 +270,11 @@ def test_cidfonttype0c_identity_h_maps_cid_through_cff_charset():
     assert _bottom_pixel(page, 25, 35).r < 0.05
 
 
-def test_cidfonttype0c_per_fd_fontmatrix_remains_fail_closed():
+def test_cidfonttype0c_per_fd_fontmatrix_composes_with_top_matrix():
     font = _cid_font(_cid_cff(fd_matrix=True))
-    with pytest.raises(RenderingError, match="per-FD FontMatrix"):
-        render_page_full(_pdf(font, (100).to_bytes(2, "big")), dpi=72)
+    page = render_page_full(_pdf(font, (100).to_bytes(2, "big")), dpi=72)
+    # FD matrix scales glyph coordinates by 2 before the default CFF .001 top
+    # matrix. The rectangle therefore reaches far beyond the no-FD x≈46 edge.
+    assert _bottom_pixel(page, 25, 35).r < 0.05
+    assert _bottom_pixel(page, 70, 35).r < 0.05
+    assert _bottom_pixel(page, 5, 35).r > 0.98

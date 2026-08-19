@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .cff import CFFError, CFFFont, UnsupportedCFFError
+from .cff_matrix import CFFMatrixError, effective_cid_font_matrix
 from .cmap import CMapError
 from .cmap_registry import resolve_type0_cmap
 from .document import PDFDocument
@@ -261,12 +262,13 @@ class CFFPDFTextFont:
         return self._decode_impl(data)
 
     def glyph_matrix(self, gid: int) -> Matrix:
-        per_fd = self.cff.fd_font_matrix(gid)
-        if per_fd is not None:
-            raise CFFPDFFontError(
-                "CID-keyed CFF per-FD FontMatrix requires owned matrix-composition support"
+        try:
+            return effective_cid_font_matrix(
+                self.cff.font_matrix,
+                self.cff.fd_font_matrix(gid),
             )
-        return _matrix(self.cff.font_matrix)
+        except CFFMatrixError as exc:
+            raise CFFPDFFontError(str(exc)) from exc
 
     def glyph_path(self, gid: int, transform: Matrix) -> Path:
         try:
