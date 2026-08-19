@@ -12,7 +12,9 @@ def test_notdefrange_is_used_when_code_has_no_ordinary_cid_mapping():
         1 begincidrange <20> <7e> 500 endcidrange
         """
     )
-    assert cmap.code_to_cid(b"\x01") == 232
+    assert cmap.code_to_cid(b"\x00") == 231
+    assert cmap.code_to_cid(b"\x01") == 231
+    assert cmap.code_to_cid(b"\x1f") == 231
     assert cmap.code_to_cid(b" ") == 500
 
 
