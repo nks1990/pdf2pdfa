@@ -9,12 +9,13 @@ from .document import PDFDocument
 from .objects import PDFDict, PDFName, PDFObject, PDFStream
 from .raster import Matrix, Path
 from .structure import decoded_stream_bytes, resolve
-from .type1 import Type1Error, Type1Font, UnsupportedType1Error
+from .type1 import Type1Error, UnsupportedType1Error
 from .type1_encoding import (
     Type1EncodingError,
     parse_type1_builtin_encoding,
     parse_type1_pdf_encoding,
 )
+from .type1_seac import SeacType1Font
 
 
 class Type1PDFFontError(ValueError):
@@ -69,13 +70,13 @@ def _widths(doc: PDFDocument, font: PDFDict) -> tuple[int, list[float], float]:
     return first, widths, missing
 
 
-def _program(doc: PDFDocument, descriptor: PDFDict) -> tuple[Type1Font, bytes]:
+def _program(doc: PDFDocument, descriptor: PDFDict) -> tuple[SeacType1Font, bytes]:
     value = resolve(doc, descriptor.get("FontFile")) if descriptor.get("FontFile") is not None else None
     if not isinstance(value, PDFStream):
         raise Type1PDFFontError("Type1 font program is not embedded in FontDescriptor /FontFile")
     try:
         data = decoded_stream_bytes(doc, value, label="Type1 FontFile")
-        return Type1Font(data), data
+        return SeacType1Font(data), data
     except (Type1Error, UnsupportedType1Error) as exc:
         raise Type1PDFFontError(f"embedded Type1 program is invalid/unsupported: {exc}") from exc
 
