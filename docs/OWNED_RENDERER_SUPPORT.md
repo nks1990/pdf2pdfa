@@ -27,9 +27,10 @@ an end-to-end regression.
 - function-based ShadingType 1 surfaces with two-input owned PDF Functions;
 - axial/radial ShadingType 2/3;
 - Gouraud mesh ShadingType 4/5, including filtered mesh streams;
-- PatternType 2 shading fills routed through the same canonical shading dispatcher;
-- PatternType 1 / PaintType 1 colored tiling fills;
-- PatternType 1 / PaintType 2 uncolored tiling fills through an owned shape-mask renderer for paths, text, strokes and ImageMask, with base color supplied by `[/Pattern base] ... scn`;
+- PatternType 2 shading fills and strokes routed through the same canonical shading dispatcher;
+- PatternType 1 / PaintType 1 colored tiling fills and strokes;
+- PatternType 1 / PaintType 2 uncolored tiling fills and strokes through an owned shape-mask renderer, with base color supplied by `[/Pattern base] ... scn/SCN`;
+- pattern strokes use the canonical affine stroke geometry for dash/cap/join/miter/hairline/non-uniform CTM, independent `CA` alpha, q/Q state, compound fill+stroke and same-path W/W* clipping;
 - normal annotation `/AP /N` rendering with BBox/Matrix-to-Rect mapping, state selection and page rotation;
 - annotation-aware visual fidelity;
 - PDF/A-1 annotation appearance transparency repair by baking the current normal appearance into the static page raster and neutralizing AP painting streams while retaining annotation dictionary/Rect/Subtype/AS semantics;
@@ -38,7 +39,6 @@ an end-to-end regression.
 ## Explicit fail-closed renderer gaps
 
 - ShadingType 6/7 Coons/tensor patch meshes;
-- pattern-colored strokes;
 - PaintType 2 cell soft masks/transparency groups and intrinsic-color content;
 - Type1 `callothersubr`/Flex glyph programs;
 - Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
