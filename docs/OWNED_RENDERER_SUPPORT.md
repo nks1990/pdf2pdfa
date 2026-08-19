@@ -10,6 +10,8 @@ an end-to-end regression.
 
 - vector fills, clipping and affine strokes;
 - TrueType/CIDFontType2 text and Type3 graphical CharProcs within the documented limits;
+- embedded Type1 PFA/PFB `/FontFile` programs rendered directly from owned eexec/CharString outlines, including PFA/PFB, local Subrs, PDF-authoritative Widths, explicit PDF encodings, built-in StandardEncoding/custom 256-array encoding fallback and Differences semantics;
+- Type1 fill/stroke/clip render modes through the same owned text-state machine used by TrueType/CFF, including Type1 inside transparency groups and annotation appearances;
 - embedded CFF1 `/Type1C` simple fonts using owned WinAnsi/Differences mapping;
 - embedded CID-keyed `/CIDFontType0C` through Identity-H or explicit owned CMap streams;
 - CFF text fill/stroke/clip render modes through the same owned text-state machine;
@@ -34,9 +36,10 @@ an end-to-end regression.
 - ShadingType 6/7 Coons/tensor patch meshes;
 - pattern-colored strokes;
 - PaintType 2 cell soft masks/transparency groups and intrinsic-color content;
+- Type1 `seac` composites and `callothersubr`/Flex glyph programs;
+- Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
 - CFF CID per-FD FontMatrix composition;
 - Type0 vertical metrics/text;
-- Type1 PFA/PFB outline rendering;
 - predefined non-Identity CMaps not yet bundled by the owned CMap layer;
 - JPX/JPEG 2000 and JBIG2 image codecs;
 - knockout transparency groups;
