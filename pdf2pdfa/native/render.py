@@ -44,9 +44,6 @@ class OwnedPageRenderer(PageRenderer):
         return super().render_page(page)
 
     def _instruction(self, instruction: ContentInstruction) -> None:
-        # Base PageRenderer creates the text-state object before it starts
-        # executing content. Install the callback lazily on the first ordinary
-        # instruction so Type3 glyphs can recurse into this same interpreter.
         if self.text is not None and self.text.type3_painter is None:
             self.text.type3_painter = self._paint_type3_glyph
 
@@ -134,7 +131,7 @@ class OwnedPageRenderer(PageRenderer):
         style,
         render_mode: int,
     ) -> None:
-        del style  # CharProc painting uses the inherited graphics state directly.
+        del style
         if render_mode != 0:
             raise UnsupportedRenderingError(
                 f"Type3 painter received unsupported text rendering mode {render_mode}"
@@ -160,9 +157,6 @@ class OwnedPageRenderer(PageRenderer):
         saved_path_ctm = self._path_ctm
         saved_mixed_path_ctm = self._mixed_path_ctm
 
-        # A synthetic q/Q establishes the glyph's private graphics-state scope.
-        # TransparencyRenderer overrides these same operators, so its soft-mask
-        # state is saved/restored as part of the exact same mechanism.
         super()._instruction(ContentInstruction((), "q", 0, 0))
         synthetic_depth = len(self.stack)
         try:
@@ -183,8 +177,6 @@ class OwnedPageRenderer(PageRenderer):
                 )
         finally:
             self._type3_depth -= 1
-            # Top-level CharProc q/Q balance was validated before execution, so
-            # the synthetic frame must still be present here on a normal path.
             while len(self.stack) > synthetic_depth:
                 super()._instruction(ContentInstruction((), "Q", 0, 0))
             if len(self.stack) == synthetic_depth:
@@ -218,6 +210,11 @@ class OwnedPageRenderer(PageRenderer):
         fill = op in {"f", "F", "f*", "B", "B*", "b", "b*"}
         stroke = op in {"S", "s", "B", "B*", "b", "b*"}
         even_odd = op in {"f*", "B*", "b*"}
+
+        # W/W* modifies the clipping path for the same path object when that
+        # path is terminated by a painting operator (or n).  Applying it after
+        # paint would incorrectly let B/S/f escape the newly selected clip.
+        self._apply_pending_clip()
 
         if fill:
             surface.fill_path(
@@ -259,7 +256,6 @@ class OwnedPageRenderer(PageRenderer):
             except StrokeError as exc:
                 raise RenderingError(str(exc)) from exc
 
-        self._apply_pending_clip()
         self.path.clear()
         self.pending_clip = None
         self._path_ctm = None
