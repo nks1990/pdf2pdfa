@@ -48,6 +48,15 @@ def knockout_pixel(backdrop: Color, source: Color, shape: float) -> Color:
     ).clamped()
 
 
+def _write_pixel(surface: Surface, x: int, y: int, color: Color) -> None:
+    color = color.clamped()
+    offset = surface._offset(x, y)
+    surface.pixels[offset + 0] = round(color.r * 255)
+    surface.pixels[offset + 1] = round(color.g * 255)
+    surface.pixels[offset + 2] = round(color.b * 255)
+    surface.pixels[offset + 3] = round(color.a * 255)
+
+
 def knockout_surface(
     destination: Surface,
     source: Surface,
@@ -85,11 +94,7 @@ def knockout_surface(
                 source.get_pixel(sx, sy),
                 h,
             )
-            offset = destination._offset(dx, dy)
-            destination.pixels[offset + 0] = round(result.r * 255)
-            destination.pixels[offset + 1] = round(result.g * 255)
-            destination.pixels[offset + 2] = round(result.b * 255)
-            destination.pixels[offset + 3] = round(result.a * 255)
+            _write_pixel(destination, dx, dy, result)
 
 
 @dataclass(slots=True)
@@ -119,5 +124,109 @@ class ShapeAccumulator:
             current = self.samples[index] / 255.0
             self.samples[index] = round(union_coverage(current, incoming) * 255)
 
+    def add_pixel(self, index: int, coverage: float) -> None:
+        incoming = _clamp(coverage)
+        if incoming <= 0.0:
+            return
+        current = self.samples[index] / 255.0
+        self.samples[index] = round(union_coverage(current, incoming) * 255)
+
     def clear(self) -> None:
         self.samples[:] = b"\x00" * len(self.samples)
+
+
+class KnockoutSurface(Surface):
+    """Surface that composites every paint sample against a fixed group backdrop.
+
+    The current pixels hold the evolving knockout-group result.  A second,
+    immutable pixel plane stores the group backdrop.  Each paint sample is
+    first rendered against that fixed backdrop and then replaces the evolving
+    result according to its independent shape coverage.
+
+    ``shape_clip`` is used only when alpha is opacity (AIS=false).  It lets the
+    renderer provide the geometric clip that existed *before* an opacity soft
+    mask was folded into ``clip``.
+    """
+
+    def __init__(self, backdrop: Surface):
+        super().__init__(
+            backdrop.width,
+            backdrop.height,
+            background=Color(0, 0, 0, 0),
+        )
+        self.pixels[:] = backdrop.pixels
+        self.clip[:] = backdrop.clip
+        self._knockout_backdrop = bytes(backdrop.pixels)
+        self.shape = ShapeAccumulator.empty(self.width, self.height)
+        self.shape_clip: bytearray | None = None
+        self.alpha_is_shape = False
+
+    def _fixed_backdrop_pixel(self, x: int, y: int) -> Color:
+        offset = self._offset(x, y)
+        data = self._knockout_backdrop
+        return Color(
+            data[offset + 0] / 255.0,
+            data[offset + 1] / 255.0,
+            data[offset + 2] / 255.0,
+            data[offset + 3] / 255.0,
+        )
+
+    def composite_pixel(
+        self,
+        x: int,
+        y: int,
+        source: Color,
+        *,
+        coverage: float = 1.0,
+        blend_mode: str = "Normal",
+    ) -> None:
+        if x < 0 or x >= self.width or y < 0 or y >= self.height:
+            return
+        index = y * self.width + x
+        geometric = _clamp(coverage)
+        if geometric <= 0.0:
+            return
+
+        paint_clip = self.clip[index] / 255.0
+        if paint_clip <= 0.0:
+            return
+
+        original = source.clamped()
+        if self.alpha_is_shape:
+            # AIS=true: alpha constant + soft mask are shape, not opacity.
+            shape = geometric * paint_clip * original.a
+            paint_source = Color(original.r, original.g, original.b, 1.0)
+            paint_coverage = geometric * original.a
+        else:
+            # AIS=false: source alpha and soft mask are opacity.  Knockout shape
+            # remains geometric, so use the pre-soft-mask clip when supplied.
+            shape_clip = (
+                self.shape_clip[index] / 255.0
+                if self.shape_clip is not None
+                else paint_clip
+            )
+            shape = geometric * shape_clip
+            paint_source = original
+            paint_coverage = geometric
+
+        shape = _clamp(shape)
+        if shape <= 0.0:
+            return
+
+        current = self.get_pixel(x, y)
+        fixed = self._fixed_backdrop_pixel(x, y)
+        _write_pixel(self, x, y, fixed)
+        try:
+            super().composite_pixel(
+                x,
+                y,
+                paint_source,
+                coverage=paint_coverage,
+                blend_mode=blend_mode,
+            )
+            object_result = self.get_pixel(x, y)
+        finally:
+            _write_pixel(self, x, y, current)
+
+        _write_pixel(self, x, y, knockout_pixel(current, object_result, shape))
+        self.shape.add_pixel(index, shape)
