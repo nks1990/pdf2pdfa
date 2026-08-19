@@ -23,6 +23,7 @@ from .structure import walk_pages
 from .tiling_pattern import ColoredTilingPatternRendererMixin
 from .transparency_group_syntax import TransparencyGroupSyntaxMixin
 from .transparency_render import TransparencyRenderer
+from .transparency_semantics import TransparencySemanticsMixin
 from .type1_render import Type1TextPageRendererMixin
 from .uncolored_pattern import UncoloredTilingPatternRendererMixin
 from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
@@ -41,6 +42,7 @@ class FullOwnedPageRenderer(
     Type1TextPageRendererMixin,
     CFFTextPageRendererMixin,
     TransparencyGroupSyntaxMixin,
+    TransparencySemanticsMixin,
     NonIsolatedTransparencyRendererMixin,
     TransparencyRenderer,
 ):
