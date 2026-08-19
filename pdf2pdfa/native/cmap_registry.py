@@ -1,7 +1,7 @@
 """Owned predefined-CMap registry and Type0 encoding resolver.
 
-Identity-H/V are algorithmic.  Other names are available only when their
-compiled mapping data is versioned in :mod:`predefined_cmap_data`.  No system
+Identity-H/V are algorithmic. Other names are available only when their
+compiled mapping data is versioned in :mod:`predefined_cmap_data`. No system
 CMap lookup, network access or external font/PDF library is ever used.
 
 Embedded CMap streams may inherit a base through either their stream dictionary
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from .cmap import CIDCMap, CIDRange, CMapError, CodeSpace
+from .cmap import CIDCMap, CIDRange, CMapError, CodeSpace, NotDefRange
 from .document import PDFDocument
 from .objects import PDFName, PDFObject, PDFStream
 from .predefined_cmap_data import CMAP_DATA
@@ -48,11 +48,17 @@ def _compiled_cmap(name: str, stack: tuple[str, ...]) -> CIDCMap:
                 raise CMapError(f"compiled CMap /{name} has malformed codespace data")
             yield CodeSpace(int(item[0]), int(item[1]), int(item[2]))
 
-    def ranges(key: str):
-        for item in raw.get(key, ()):
+    def cid_ranges():
+        for item in raw.get("cid_ranges", ()):
             if not isinstance(item, tuple) or len(item) != 4:
-                raise CMapError(f"compiled CMap /{name} has malformed {key} data")
+                raise CMapError(f"compiled CMap /{name} has malformed cid_ranges data")
             yield CIDRange(int(item[0]), int(item[1]), int(item[2]), int(item[3]))
+
+    def notdef_ranges():
+        for item in raw.get("notdef_ranges", ()):
+            if not isinstance(item, tuple) or len(item) != 4:
+                raise CMapError(f"compiled CMap /{name} has malformed notdef_ranges data")
+            yield NotDefRange(int(item[0]), int(item[1]), int(item[2]), int(item[3]))
 
     vertical = raw.get("vertical")
     if not isinstance(vertical, bool):
@@ -60,8 +66,8 @@ def _compiled_cmap(name: str, stack: tuple[str, ...]) -> CIDCMap:
 
     return CIDCMap(
         codespaces=spaces(),
-        cid_ranges=ranges("cid_ranges"),
-        notdef_ranges=ranges("notdef_ranges"),
+        cid_ranges=cid_ranges(),
+        notdef_ranges=notdef_ranges(),
         vertical=vertical,
         base=base,
         name=name,
