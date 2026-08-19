@@ -13,6 +13,7 @@ from .annotation_render import AnnotationAppearanceRendererMixin
 from .ccitt_render import CCITTImageRendererMixin
 from .cff_render import CFFTextPageRendererMixin
 from .document import PDFDocument
+from .knockout_transparency import KnockoutTransparencyRendererMixin
 from .nonisolated_transparency import NonIsolatedTransparencyRendererMixin
 from .page_render import RenderedPage
 from .pattern_dispatch import CanonicalPatternShadingMixin
@@ -23,6 +24,7 @@ from .structure import walk_pages
 from .tiling_pattern import ColoredTilingPatternRendererMixin
 from .transparency_group_syntax import TransparencyGroupSyntaxMixin
 from .transparency_render import TransparencyRenderer
+from .transparency_semantics import TransparencySemanticsMixin
 from .type1_render import Type1TextPageRendererMixin
 from .uncolored_pattern import UncoloredTilingPatternRendererMixin
 from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
@@ -31,6 +33,7 @@ from .uncolored_pattern_safety import UncoloredPatternSafetyMixin
 class FullOwnedPageRenderer(
     AnnotationAppearanceRendererMixin,
     CCITTImageRendererMixin,
+    KnockoutTransparencyRendererMixin,
     PatternStrokeRendererMixin,
     UncoloredPatternSafetyMixin,
     UncoloredTilingPatternRendererMixin,
@@ -41,6 +44,7 @@ class FullOwnedPageRenderer(
     Type1TextPageRendererMixin,
     CFFTextPageRendererMixin,
     TransparencyGroupSyntaxMixin,
+    TransparencySemanticsMixin,
     NonIsolatedTransparencyRendererMixin,
     TransparencyRenderer,
 ):
