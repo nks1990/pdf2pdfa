@@ -48,6 +48,17 @@ def _compiled_cmap(name: str, stack: tuple[str, ...]) -> CIDCMap:
                 raise CMapError(f"compiled CMap /{name} has malformed codespace data")
             yield CodeSpace(int(item[0]), int(item[1]), int(item[2]))
 
+    def point_map(key: str) -> dict[bytes, int]:
+        result: dict[bytes, int] = {}
+        for item in raw.get(key, ()):
+            if not isinstance(item, tuple) or len(item) != 3:
+                raise CMapError(f"compiled CMap /{name} has malformed {key} data")
+            code, length, cid = int(item[0]), int(item[1]), int(item[2])
+            if length <= 0 or code < 0 or code >= (1 << (8 * length)) or cid < 0:
+                raise CMapError(f"compiled CMap /{name} has out-of-range {key} entry")
+            result[code.to_bytes(length, "big")] = cid
+        return result
+
     def cid_ranges():
         for item in raw.get("cid_ranges", ()):
             if not isinstance(item, tuple) or len(item) != 4:
@@ -66,7 +77,9 @@ def _compiled_cmap(name: str, stack: tuple[str, ...]) -> CIDCMap:
 
     return CIDCMap(
         codespaces=spaces(),
+        cid_chars=point_map("cid_chars"),
         cid_ranges=cid_ranges(),
+        notdef_chars=point_map("notdef_chars"),
         notdef_ranges=notdef_ranges(),
         vertical=vertical,
         base=base,
