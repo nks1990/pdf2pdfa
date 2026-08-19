@@ -1,12 +1,11 @@
-"""Owned simple-font encoding maps used by Type1C and future Type1 fonts.
+"""Owned simple-font encoding maps for Type1/CFF PDF fonts.
 
-The mapping result is a PostScript glyph name, not Unicode. This distinction is
-important for name-keyed CFF programs: PDF character codes select encoding
-names, and those names select CFF CharStrings.
+The mapping result is a PostScript glyph name, not Unicode. PDF character
+codes select encoding names and those names select embedded font CharStrings.
 
-WinAnsi is implemented for its defined byte positions. Standard/MacRoman are
-currently conservative outside ASCII unless /Differences supplies the name;
-unknown mappings remain absent so callers fail closed rather than guessing.
+WinAnsi and Adobe StandardEncoding are implemented for all defined byte
+positions. MacRoman intentionally remains conservative outside ASCII until its
+complete owned table is added; callers fail closed instead of guessing.
 """
 
 from __future__ import annotations
@@ -46,6 +45,34 @@ def _ascii_names() -> dict[int, str]:
         result[code] = chr(code)
     for code in range(97, 123):
         result[code] = chr(code)
+    return result
+
+
+_STANDARD_HIGH = {
+    161: "exclamdown", 162: "cent", 163: "sterling", 164: "fraction",
+    165: "yen", 166: "florin", 167: "section", 168: "currency",
+    169: "quotesingle", 170: "quotedblleft", 171: "guillemotleft",
+    172: "guilsinglleft", 173: "guilsinglright", 174: "fi", 175: "fl",
+    177: "endash", 178: "dagger", 179: "daggerdbl", 180: "periodcentered",
+    182: "paragraph", 183: "bullet", 184: "quotesinglbase",
+    185: "quotedblbase", 186: "quotedblright", 187: "guillemotright",
+    188: "ellipsis", 189: "perthousand", 191: "questiondown",
+    193: "grave", 194: "acute", 195: "circumflex", 196: "tilde",
+    197: "macron", 198: "breve", 199: "dotaccent", 200: "dieresis",
+    202: "ring", 203: "cedilla", 205: "hungarumlaut", 206: "ogonek",
+    207: "caron", 208: "emdash", 225: "AE", 227: "ordfeminine",
+    232: "Lslash", 233: "Oslash", 234: "OE", 235: "ordmasculine",
+    241: "ae", 245: "dotlessi", 248: "lslash", 249: "oslash",
+    250: "oe", 251: "germandbls",
+}
+
+
+def _standard_names() -> dict[int, str]:
+    result = _ascii_names()
+    # Adobe StandardEncoding differs from ASCII/WinAnsi at these two positions.
+    result[39] = "quoteright"
+    result[96] = "quoteleft"
+    result.update(_STANDARD_HIGH)
     return result
 
 
@@ -104,10 +131,11 @@ def base_encoding(name: str | None) -> dict[int, str]:
         result = _ascii_names()
         result.update(_WINANSI_HIGH)
         return result
-    if name in {"StandardEncoding", "MacRomanEncoding"}:
-        # ASCII is common to both and is safe. Non-ASCII entries are not guessed
-        # until their complete owned tables are added; Differences can still
-        # explicitly provide any required glyph name.
+    if name == "StandardEncoding":
+        return _standard_names()
+    if name == "MacRomanEncoding":
+        # ASCII positions are safe; non-ASCII MacRoman stays fail-closed until
+        # the complete owned table is introduced.
         return _ascii_names()
     raise FontEncodingError(f"unsupported simple-font base encoding /{name}")
 
@@ -120,7 +148,7 @@ def parse_encoding(
 ) -> dict[int, str]:
     if value is None:
         if require_explicit:
-            raise FontEncodingError("simple CFF font requires an explicit PDF Encoding")
+            raise FontEncodingError("simple font requires an explicit PDF Encoding")
         return {}
     value = resolve(doc, value)
     if isinstance(value, PDFName):
