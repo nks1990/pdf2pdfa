@@ -7,10 +7,10 @@ counter-control hint OtherSubrs 12/13 are recognized. Proprietary/Multiple
 Master OtherSubrs remain fail closed.
 
 Flex follows the Type 1 protocol used by mature interpreters: OtherSubr 1 starts
-Flex, seven OtherSubr-2 samples are collected after the CharString move
-vectors, sample 0 only moves the current point, samples 1..6 form two cubic
-Bezier segments, and OtherSubr 0 returns the final x/y through two following
-``pop`` operators before ``setcurrentpoint``.
+Flex, seven OtherSubr-2 samples are collected after CharString move vectors,
+sample 0 only moves the current point, samples 1..6 form two cubic Bezier
+segments, and OtherSubr 0 returns final x/y through two following ``pop``
+operators before ``setcurrentpoint``.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ class _FlexSeacInterpreter(_SeacInterpreter):
         self._flex_points: list[tuple[float, float]] = []
         self._flex_saved_have_subpath = False
         self._flex_saved_start = (0.0, 0.0)
+        self._flex_command_floor = 0
         self._pending_known_pops = 0
 
     def _callothersubr(self) -> None:
@@ -46,12 +47,19 @@ class _FlexSeacInterpreter(_SeacInterpreter):
                 raise Type1Error("nested Type1 Flex is not permitted")
             self._flex_active = True
             self._flex_points = []
-            self._flex_saved_have_subpath = self.state.have_subpath
-            self._flex_saved_start = (self.state.start_x, self.state.start_y)
-            if not self.state.have_subpath:
+            if self.state.have_subpath:
+                self._flex_saved_have_subpath = True
+                self._flex_saved_start = (self.state.start_x, self.state.start_y)
+            else:
+                # FreeType's builder_start_point establishes the current point
+                # before the seven relative flex vectors. Represent that point
+                # explicitly so the first cubic has a valid contour origin.
                 self.commands.append(Type1Command("M", (self.state.x, self.state.y)))
                 self.state.have_subpath = True
                 self.state.start_x, self.state.start_y = self.state.x, self.state.y
+                self._flex_saved_have_subpath = True
+                self._flex_saved_start = (self.state.x, self.state.y)
+            self._flex_command_floor = len(self.commands)
             return
 
         if subr_no == 2:  # record flex vector destination
@@ -61,16 +69,19 @@ class _FlexSeacInterpreter(_SeacInterpreter):
                 raise Type1Error("Type1 Flex vector encountered before Flex start")
             if len(self._flex_points) >= 7:
                 raise Type1Error("Type1 Flex contains more than seven vector samples")
-            # The preceding r/h/vmoveto updates the CharString current point but
-            # is not itself an outline moveto while Flex is active. Remove that
-            # synthetic M and restore the contour-start bookkeeping.
-            if self.commands and self.commands[-1].operator == "M":
-                values = self.commands[-1].values
-                if values == (self.state.x, self.state.y):
-                    self.commands.pop()
-            if self._flex_saved_have_subpath:
-                self.state.have_subpath = True
-                self.state.start_x, self.state.start_y = self._flex_saved_start
+            # Standard Flex requires a preceding r/h/vmoveto vector. The base
+            # interpreter emitted that move as M; remove only a command created
+            # after Flex start, never the synthetic/original contour origin.
+            if len(self.commands) <= self._flex_command_floor:
+                raise Type1Error("Type1 Flex vector OtherSubr 2 requires a preceding move")
+            last = self.commands[-1]
+            if last.operator != "M" or last.values != (self.state.x, self.state.y):
+                raise Type1Error("Type1 Flex vector OtherSubr 2 shall follow a move operator")
+            self.commands.pop()
+            if len(self.commands) != self._flex_command_floor:
+                raise Type1Error("Type1 Flex vector move emitted unexpected outline commands")
+            self.state.have_subpath = self._flex_saved_have_subpath
+            self.state.start_x, self.state.start_y = self._flex_saved_start
             self._flex_points.append((self.state.x, self.state.y))
             return
 
@@ -87,14 +98,10 @@ class _FlexSeacInterpreter(_SeacInterpreter):
                 Type1Command("C", (*points[4], *points[5], *points[6]))
             )
             self.state.x, self.state.y = points[6]
-            if self._flex_saved_have_subpath:
-                self.state.have_subpath = True
-                self.state.start_x, self.state.start_y = self._flex_saved_start
+            self.state.have_subpath = self._flex_saved_have_subpath
+            self.state.start_x, self.state.start_y = self._flex_saved_start
             self._flex_active = False
             self._flex_points = []
-            # Mature Type1 interpreters expose x/y as the two known results;
-            # the following pop/pop transfer protocol is represented by keeping
-            # them on the CharString stack while counting the required pops.
             self.stack.extend([self.state.x, self.state.y])
             self._pending_known_pops += 2
             return
@@ -102,20 +109,16 @@ class _FlexSeacInterpreter(_SeacInterpreter):
         if subr_no == 3:  # hint replacement
             if arg_count != 1:
                 raise Type1Error("Type1 hint-replacement OtherSubr 3 expects one argument")
-            # Hints do not alter the owned geometric outline. The standard
-            # OtherSubr returns its argument through one following pop.
             self.stack.append(args[0])
             self._pending_known_pops += 1
             return
 
         if subr_no in (12, 13):  # counter-control hints
-            # Hint-only state is intentionally not modeled by the geometric
-            # renderer. These standard OtherSubrs return no CharString values.
             self.stack.clear()
             return
 
         raise UnsupportedType1Error(
-            f"Type1 OtherSubr {subr_no} requires a PostScript/MM semantics not owned by this renderer"
+            f"Type1 OtherSubr {subr_no} requires PostScript/MM semantics not owned by this renderer"
         )
 
     def _escape(self, op: int) -> None:
@@ -125,8 +128,6 @@ class _FlexSeacInterpreter(_SeacInterpreter):
         if op == 17:
             if self._pending_known_pops <= 0:
                 raise Type1Error("Type1 pop has no pending OtherSubr result")
-            # Known results were placed on the CharString stack at
-            # callothersubr time; pop acknowledges their PostScript transfer.
             self._pending_known_pops -= 1
             return
         if op == 33:
