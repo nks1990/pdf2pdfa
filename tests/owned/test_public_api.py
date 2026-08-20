@@ -171,7 +171,7 @@ def test_cli_inspect_signature_override_matches_converter_policy(capsys):
         source.write_bytes(_source(applied_signature=True))
 
         assert main(["inspect", str(source), "--level", "2b", "--json"]) == 2
-        blocked = json.loads(capsys.readouterr().out)
+        blocked = json.loads(capsys.readouterr().out)["result"]
         assert blocked["repairable"] is False
         assert any(item["code"] == "applied-signature" for item in blocked["plan"]["blockers"])
 
@@ -185,7 +185,7 @@ def test_cli_inspect_signature_override_matches_converter_policy(capsys):
                 "--json",
             ]
         )
-        intentional = json.loads(capsys.readouterr().out)
+        intentional = json.loads(capsys.readouterr().out)["result"]
         assert code in (0, 2)
         assert all(item["code"] != "applied-signature" for item in intentional["plan"]["blockers"])
 
@@ -209,7 +209,7 @@ def test_cli_inspect_reports_font_simulation(capsys):
                 "--json",
             ]
         )
-        report = json.loads(capsys.readouterr().out)
+        report = json.loads(capsys.readouterr().out)["result"]
         assert code in (0, 2)
         assert report["fonts"] is not None
         assert report["fonts"]["embedded"] == 1
@@ -234,26 +234,23 @@ def test_cli_convert_and_validate_round_trip(capsys):
         source.write_bytes(_source())
 
         assert main(["convert", str(source), str(output), "--level", "2b", "--json"]) == 0
-        converted = json.loads(capsys.readouterr().out)
+        converted = json.loads(capsys.readouterr().out)["result"]
         assert converted["engine"] == "pdf2pdfa-owned"
         assert converted["validation"]["compliant"] is True
 
         assert main(["validate", str(output), "--level", "2b", "--json"]) == 0
-        validated = json.loads(capsys.readouterr().out)
+        validated = json.loads(capsys.readouterr().out)["result"]
         assert validated["compliant"] is True
         assert validated["engine"] == "pdf2pdfa-owned"
 
 
-def test_cli_has_no_external_backend_or_validator_options():
-    # argparse must reject the removed architectural escape hatches.
+def test_cli_has_no_external_backend_or_validator_options(capsys):
     with tempfile.TemporaryDirectory() as tempdir_name:
         root = Path(tempdir_name)
         source = root / "source.pdf"
         output = root / "out.pdf"
         source.write_bytes(_source())
-        try:
-            main(["convert", str(source), str(output), "--backend", "ghostscript"])
-        except SystemExit as exc:
-            assert exc.code != 0
-        else:
-            raise AssertionError("removed --backend option unexpectedly accepted")
+        assert main(["convert", str(source), str(output), "--backend", "ghostscript"]) == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert captured.err.startswith("ERROR:")
