@@ -65,6 +65,7 @@ def main() -> int:
         ROOT / "scripts" / "corpus_check.py",
         ROOT / "scripts" / "external_oracle_check.py",
         ROOT / "scripts" / "e2e_smoke.py",
+        ROOT / "scripts" / "wheel_smoke.py",
         ROOT / "tests" / "native" / "test_native_module_graph.py",
         ROOT / "tests" / "owned" / "test_package_ownership.py",
     ]
