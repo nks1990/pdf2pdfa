@@ -119,7 +119,7 @@ def test_agent_json_runtime_error_has_stable_code_and_no_human_stderr(capsys):
     assert main(["validate", missing, "--level", "2b", "--json"]) == 2
     captured = capsys.readouterr()
     assert captured.err == ""
-        
+
     payload = json.loads(captured.out)
     _assert_envelope(payload, "validate", 2)
     assert payload["ok"] is False
@@ -159,7 +159,8 @@ def test_agent_batch_partial_failure_keeps_per_item_machine_errors(capsys):
         assert result["failures"] == 1
         failed = [item for item in result["results"] if not item["ok"]]
         assert len(failed) == 1
-        assert failed[0]["error"]["code"] in {"INPUT_NOT_FOUND", "PIPELINE_ERROR"}
+        assert failed[0]["error"]["code"] == "INPUT_NOT_FOUND"
+        assert failed[0]["status"] == "invalid_input"
 
 
 def test_non_json_errors_remain_human_readable(capsys):
