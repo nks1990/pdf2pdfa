@@ -89,7 +89,10 @@ def error_payload(exc: BaseException) -> dict[str, Any]:
     elif isinstance(exc, OSError):
         code, category, retryable = "IO_ERROR", "operational_error", True
     elif isinstance(exc, OwnedPipelineError):
-        code, category = "PIPELINE_ERROR", "operational_error"
+        if str(exc).startswith("input is not a regular file:"):
+            code, category = "INPUT_NOT_FOUND", "invalid_input"
+        else:
+            code, category = "PIPELINE_ERROR", "operational_error"
     elif isinstance(exc, KeyboardInterrupt):
         code, category = "INTERRUPTED", "interrupted"
 
