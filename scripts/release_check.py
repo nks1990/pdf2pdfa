@@ -61,6 +61,10 @@ def main() -> int:
         ROOT / "pdf2pdfa" / "native" / "render.py",
         ROOT / "pdf2pdfa" / "native" / "predefined_cmap_data.py",
         ROOT / "pdf2pdfa" / "py.typed",
+        ROOT / "scripts" / "check.py",
+        ROOT / "scripts" / "corpus_check.py",
+        ROOT / "scripts" / "external_oracle_check.py",
+        ROOT / "scripts" / "e2e_smoke.py",
         ROOT / "tests" / "native" / "test_native_module_graph.py",
         ROOT / "tests" / "owned" / "test_package_ownership.py",
     ]
@@ -79,6 +83,14 @@ def main() -> int:
         fail("continuous/inadvertent workflows are present: " + ", ".join(unexpected))
     if workflows != ["release.yml"]:
         fail("release.yml must be the only GitHub Actions workflow")
+
+    workflow_text = (workflow_dir / "release.yml").read_text(encoding="utf-8")
+    if 'tags:\n      - "v*.*.*"' not in workflow_text:
+        fail("release workflow must be tag-triggered")
+    if "python scripts/check.py --full" not in workflow_text:
+        fail("release workflow must run the full owned gate before publication")
+    if "pypa/gh-action-pypi-publish" not in workflow_text:
+        fail("release workflow is missing PyPI publication action")
 
     tag = os.environ.get("GITHUB_REF_NAME") or os.environ.get("PDF2PDFA_RELEASE_TAG")
     if tag:
