@@ -45,6 +45,13 @@ pip install pdf2pdfa
 
 Python 3.10+ is required. No additional runtime package or executable is required.
 
+Check the installed version:
+
+```bash
+pdf2pdfa --version
+python -m pdf2pdfa --version
+```
+
 ## CLI
 
 Convert one document:
@@ -55,11 +62,20 @@ pdf2pdfa convert input.pdf output.pdf --level 2b
 
 The output is always validated by the owned validator before publication. There is no `--validate` switch because validation is not optional.
 
-Inspect a document and the exact repair plan without writing it:
+Dry-run the same conversion-preparation path and inspect the repair plan without writing a destination:
 
 ```bash
 pdf2pdfa inspect input.pdf --level 1b
 pdf2pdfa inspect input.pdf --level 1b --json
+```
+
+Inspection mirrors conversion preparation: encrypted input is authenticated/decrypted in process, signature policy is applied, explicit font programs can be simulated, the document is serialized for the requested profile, then the owned validator/repair planner runs.
+
+For example, inspect a document while supplying the font assets that would also be supplied to conversion:
+
+```bash
+pdf2pdfa inspect input.pdf --level 2b --font ./fonts/SomeFont.ttf --json
+pdf2pdfa inspect input.pdf --level 2b --font-dir ./fonts --json
 ```
 
 Validate without converting:
@@ -74,12 +90,16 @@ Batch conversion:
 pdf2pdfa batch *.pdf --level 3b
 ```
 
+For file-size ingestion limits, `convert`, `batch`, `inspect` and `validate` support `--max-input-mib` where applicable. File-backed validation/inspection checks the size before reading and rechecks after reading.
+
 Encrypted input can use `PDF2PDFA_PASSWORD` or a password file so a secret does not need to appear in the command line:
 
 ```bash
 PDF2PDFA_PASSWORD='secret' pdf2pdfa convert protected.pdf archive.pdf
 pdf2pdfa convert protected.pdf archive.pdf --password-file ./password.txt
 ```
+
+There is intentionally no plaintext `--password TEXT` option.
 
 Explicit font programs can be supplied to repair missing embedded fonts without guessing against machine-specific system fonts:
 
@@ -97,11 +117,22 @@ converter = Converter(level="2b", fidelity="auto")
 
 inspection = converter.inspect("input.pdf")
 print(inspection.repairable)
+print(inspection.plan.blockers)
 
 result = converter.convert("input.pdf", "output.pdf")
 print(result.validation.compliant)
 print(result.validation.engine)      # pdf2pdfa-owned
 print(result.fidelity_mode)          # semantic / visual / passthrough
+```
+
+Dry-run with the same explicit font program used by conversion:
+
+```python
+inspection = converter.inspect(
+    "input.pdf",
+    font_paths=["./fonts/SomeFont.ttf"],
+)
+print(inspection.fonts.embedded if inspection.fonts else 0)
 ```
 
 Standalone validation:
@@ -112,6 +143,8 @@ for failure in report.failures:
     print(failure.rule_id, failure.path, failure.message)
 ```
 
+Applications handling untrusted uploads should set `max_input_bytes` and also apply process/container CPU, memory, wall-clock and filesystem quotas. PDF size alone cannot bound decompression/rendering cost.
+
 ## Conversion pipeline
 
 Every rewrite follows the same fail-closed path:
@@ -119,16 +152,17 @@ Every rewrite follows the same fail-closed path:
 1. Parse the source with the owned PDF parser.
 2. Decrypt in-process when a supported Standard Security Handler password is supplied.
 3. Refuse applied signatures unless invalidation was explicitly allowed.
-4. Preprocess explicit font programs when required.
-5. Run the owned validator and construct a repair plan.
-6. Refuse any feature for which a safe owned repair is not implemented.
-7. Apply structural repairs and, for PDF/A-1 when required, owned transparency flattening.
-8. Write a candidate to a private temporary path.
-9. Reparse and validate the candidate with the owned PDF/A rule engine.
-10. Run semantic fidelity for structural rewrites or visual fidelity when page painting was intentionally rewritten.
-11. Atomically replace the requested output only after all required gates pass.
+4. Preprocess explicitly supplied font programs when required.
+5. Serialize the working document for the requested PDF/A profile.
+6. Run the owned validator and construct a repair plan.
+7. Refuse any feature for which a safe owned repair is not implemented.
+8. Apply structural repairs and, for PDF/A-1 when required, owned transparency flattening.
+9. Write a candidate to a private temporary path.
+10. Reparse and validate the candidate with the owned PDF/A rule engine.
+11. Run semantic fidelity for structural rewrites or visual fidelity when page painting was intentionally rewritten.
+12. Atomically replace the requested output only after all required gates pass.
 
-An existing conforming, unencrypted file is copied byte-for-byte rather than rewritten.
+An existing conforming, unencrypted file is preserved byte-for-byte rather than rewritten, including when it carries a signature that would otherwise be invalidated by rewriting.
 
 ## Fidelity
 
@@ -168,7 +202,7 @@ These are **fail-closed** limitations. If conversion or fidelity requires an uns
 
 ## Digital signatures
 
-Rewriting a signed PDF invalidates the byte ranges covered by an existing signature. Signed input is therefore refused by default. Use `--allow-signature-invalidation` only when invalidating the signature is intentional.
+Rewriting a signed PDF invalidates the byte ranges covered by an existing signature. A signed input that requires rewriting is therefore refused by default. Use `--allow-signature-invalidation` only when invalidating the signature is intentional. `inspect` reports the same blocker under the same policy.
 
 ## Repository layout
 
@@ -195,22 +229,41 @@ pdf2pdfa/
 tests/
   native/               component and adversarial regression tests
   owned/                package ownership and public API contracts
+scripts/
+  check.py              canonical source/package/full gate
+  wheel_smoke.py        isolated installed-wheel qualification
+  corpus_check.py       real-world corpus classifier/converter
+  external_oracle_check.py  optional independent qualification oracles
 ```
 
 See [Architecture](docs/ARCHITECTURE.md), [Compliance](docs/COMPLIANCE.md), [Testing](docs/TESTING.md), [Renderer support](docs/RENDERER_SUPPORT.md), [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
 
 ## Development and release checks
 
-The repository intentionally has **no push/pull-request CI workflow**. Run the quality gate before merging or tagging:
+The repository intentionally has **no push/pull-request CI workflow**. Run the quality gate on the exact release candidate before merging or tagging:
 
 ```bash
 python -m pip install -e ".[dev]"
 python scripts/check.py --full
 ```
 
-`--full` runs release sanity checks, the complete owned regression suite, package build/metadata checks and owned end-to-end conversion/validation/fidelity smoke tests for 1b, 2b and 3b.
+`--full` runs release sanity checks, package/script compilation, the complete owned regression suite, wheel/sdist build and metadata checks, an **isolated installed-wheel smoke**, and owned end-to-end conversion/validation/fidelity smoke tests for 1b, 2b and 3b.
 
-The only GitHub workflow is tag-triggered PyPI publication. The release workflow repeats the full owned gate and publishes only if it passes, so a release tag cannot bypass tests, package checks or end-to-end smoke validation.
+For release qualification beyond the generated regression corpus:
+
+```bash
+python scripts/corpus_check.py ./corpus \
+  --output-dir ./qualification-output \
+  --json ./qualification-output/corpus-report.json
+
+python scripts/external_oracle_check.py ./qualification-output \
+  --require verapdf \
+  --json ./qualification-output/oracle-report.json
+```
+
+External tools in the second command are optional **qualification oracles** only; they are not runtime dependencies and do not participate in production conversion decisions.
+
+The only GitHub workflow is tag-triggered PyPI publication. Its external Actions are pinned to immutable commit SHAs, it refuses a release tag whose commit is not reachable from `main`, it does not persist checkout credentials, it repeats the full owned gate and publishes only after all source/package/wheel/E2E gates pass.
 
 ## License
 
