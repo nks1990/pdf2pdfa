@@ -10,12 +10,23 @@ import sys
 from typing import Sequence
 
 from . import __version__
+from .agent_protocol import envelope, error_payload
 from .converter import Converter, InspectionResult
 from .native.pdfa import ValidationReport
 
 
 LEVELS = ("1b", "2b", "3b")
 FIDELITY = ("auto", "semantic", "visual", "off")
+_COMMANDS = {"convert", "batch", "inspect", "preflight", "validate"}
+
+
+class CLIUsageError(ValueError):
+    """Raised instead of argparse printing an unstructured usage error."""
+
+
+class _ArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        raise CLIUsageError(message)
 
 
 def _password(path: str | None) -> str | None:
@@ -76,12 +87,30 @@ def _inspection_dict(report: InspectionResult) -> dict[str, object]:
             "operations": list(report.plan.operations),
             "warnings": list(report.plan.warnings),
             "flatten_pages": list(getattr(report.plan, "flatten_pages", ())),
+            "flatten_annotation_pages": list(
+                getattr(report.plan, "flatten_annotation_pages", ())
+            ),
             "blockers": [
                 {"code": item.code, "message": item.message, "path": item.path}
                 for item in report.plan.blockers
             ],
         },
     }
+
+
+def _json_print(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False))
+
+
+def _command_name(value: str | None) -> str | None:
+    return "inspect" if value == "preflight" else value
+
+
+def _command_hint(argv: Sequence[str]) -> str | None:
+    for item in argv:
+        if item in _COMMANDS:
+            return _command_name(item)
+    return argv[0] if argv and not argv[0].startswith("-") else None
 
 
 def _add_common_conversion_options(parser: argparse.ArgumentParser) -> None:
@@ -111,7 +140,7 @@ def _converter(args: argparse.Namespace) -> Converter:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ArgumentParser(
         prog="pdf2pdfa",
         description="Convert and validate PDF/A using only the repository-owned engine.",
     )
@@ -176,7 +205,16 @@ def _convert(args: argparse.Namespace) -> int:
         "operations": list(result.plan.operations),
     }
     if args.json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        status = "passthrough" if result.source_was_already_compliant else "converted"
+        _json_print(
+            envelope(
+                "convert",
+                ok=True,
+                status=status,
+                exit_code=0,
+                result=payload,
+            )
+        )
     else:
         print(
             f"Converted {args.input} -> {args.output} "
@@ -206,6 +244,7 @@ def _batch(args: argparse.Namespace) -> int:
                     "input": str(source),
                     "output": str(output),
                     "ok": True,
+                    "status": "passthrough" if result.source_was_already_compliant else "converted",
                     "level": result.level,
                     "fidelity_mode": result.fidelity_mode,
                 }
@@ -214,12 +253,29 @@ def _batch(args: argparse.Namespace) -> int:
                 print(f"OK {source} -> {output} [PDF/A-{result.level}]")
         except Exception as exc:
             failures += 1
-            results.append({"input": str(source), "output": str(output), "ok": False, "error": str(exc)})
+            results.append(
+                {
+                    "input": str(source),
+                    "output": str(output),
+                    "ok": False,
+                    "status": error_payload(exc)["category"],
+                    "error": error_payload(exc),
+                }
+            )
             if not args.json_output:
                 print(f"FAILED {source}: {exc}", file=sys.stderr)
+    code = 1 if failures else 0
     if args.json_output:
-        print(json.dumps({"failures": failures, "results": results}, indent=2, sort_keys=True))
-    return 1 if failures else 0
+        _json_print(
+            envelope(
+                "batch",
+                ok=failures == 0,
+                status="partial_failure" if failures else "completed",
+                exit_code=code,
+                result={"failures": failures, "results": results},
+            )
+        )
+    return code
 
 
 def _inspect(args: argparse.Namespace) -> int:
@@ -238,8 +294,22 @@ def _inspect(args: argparse.Namespace) -> int:
         font_directories=args.font_dir,
     )
     payload = _inspection_dict(result)
+    if result.compliant:
+        status, code, ok = "compliant", 0, True
+    elif result.repairable:
+        status, code, ok = "repairable", 0, True
+    else:
+        status, code, ok = "blocked", 2, False
     if args.json_output:
-        print(json.dumps(payload, indent=2, sort_keys=True))
+        _json_print(
+            envelope(
+                "inspect",
+                ok=ok,
+                status=status,
+                exit_code=code,
+                result=payload,
+            )
+        )
     else:
         state = "COMPLIANT" if result.compliant else "NEEDS-REPAIR"
         print(f"PDF/A-{result.level}: {state}; repairable={result.repairable}; encrypted={result.encrypted}")
@@ -254,7 +324,7 @@ def _inspect(args: argparse.Namespace) -> int:
         for blocker in result.plan.blockers:
             suffix = f" ({blocker.path})" if blocker.path else ""
             print(f"  BLOCK {blocker.code}: {blocker.message}{suffix}")
-    return 0 if result.repairable or result.compliant else 2
+    return code
 
 
 def _validate(args: argparse.Namespace) -> int:
@@ -263,39 +333,102 @@ def _validate(args: argparse.Namespace) -> int:
         level=args.level,
         max_input_bytes=_max_bytes(args.max_input_mib),
     ).validate(args.input)
+    payload = _validation_dict(report)
+    code = 0 if report.compliant else 1
     if args.json_output:
-        print(json.dumps(_validation_dict(report), indent=2, sort_keys=True))
+        _json_print(
+            envelope(
+                "validate",
+                ok=report.compliant,
+                status="compliant" if report.compliant else "invalid",
+                exit_code=code,
+                result=payload,
+            )
+        )
     else:
         print(f"PDF/A-{report.level}: {'PASS' if report.compliant else 'FAIL'} ({report.engine})")
         for failure in report.failures:
             suffix = f" [{failure.path}]" if failure.path else ""
             print(f"  {failure.rule_id}: {failure.message}{suffix}")
-    return 0 if report.compliant else 1
+    return code
+
+
+def _dispatch(args: argparse.Namespace) -> int:
+    if args.command == "convert":
+        return _convert(args)
+    if args.command == "batch":
+        return _batch(args)
+    if args.command in ("inspect", "preflight"):
+        return _inspect(args)
+    if args.command == "validate":
+        return _validate(args)
+    raise CLIUsageError(f"unknown command {args.command!r}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    raw = list(sys.argv[1:] if argv is None else argv)
+    json_requested = "--json" in raw
+    command = _command_hint(raw)
     parser = _parser()
-    args = parser.parse_args(argv)
     try:
-        if args.command == "convert":
-            return _convert(args)
-        if args.command == "batch":
-            return _batch(args)
-        if args.command in ("inspect", "preflight"):
-            return _inspect(args)
-        if args.command == "validate":
-            return _validate(args)
-        parser.error(f"unknown command {args.command!r}")
-    except KeyboardInterrupt:
-        print("Interrupted", file=sys.stderr)
+        args = parser.parse_args(raw)
+    except CLIUsageError as exc:
+        if json_requested:
+            _json_print(
+                envelope(
+                    command,
+                    ok=False,
+                    status="usage_error",
+                    exit_code=2,
+                    error={
+                        "code": "USAGE_ERROR",
+                        "type": type(exc).__name__,
+                        "category": "usage_error",
+                        "message": str(exc),
+                        "retryable": False,
+                    },
+                )
+            )
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    command = _command_name(args.command)
+    json_requested = bool(getattr(args, "json_output", False))
+    try:
+        return _dispatch(args)
+    except KeyboardInterrupt as exc:
+        if json_requested:
+            _json_print(
+                envelope(
+                    command,
+                    ok=False,
+                    status="interrupted",
+                    exit_code=130,
+                    error=error_payload(exc),
+                )
+            )
+        else:
+            print("Interrupted", file=sys.stderr)
         return 130
     except Exception as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        if json_requested:
+            details = error_payload(exc)
+            _json_print(
+                envelope(
+                    command,
+                    ok=False,
+                    status=str(details["category"]),
+                    exit_code=2,
+                    error=details,
+                )
+            )
+        else:
+            print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    return 2
 
 
-cli = main  # small source-compatibility alias; no Click object remains.
+cli = main
 
 
 if __name__ == "__main__":
