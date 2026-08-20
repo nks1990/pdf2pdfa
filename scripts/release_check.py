@@ -24,6 +24,21 @@ def _version(pyproject: str) -> str:
     return match.group(1).strip()
 
 
+def _check_action_pins(workflow_text: str) -> None:
+    for raw_line in workflow_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped.startswith("uses:") and not stripped.startswith("- uses:"):
+            continue
+        target = stripped.split("uses:", 1)[1].strip().split("#", 1)[0].strip()
+        if target.startswith("./"):
+            continue
+        if "@" not in target:
+            fail(f"workflow action is missing a ref: {target}")
+        _action, revision = target.rsplit("@", 1)
+        if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+            fail(f"workflow action must be pinned to a 40-character commit SHA: {target}")
+
+
 def main() -> int:
     pyproject_path = ROOT / "pyproject.toml"
     text = pyproject_path.read_text(encoding="utf-8")
@@ -92,6 +107,7 @@ def main() -> int:
         fail("release workflow must run the full owned gate before publication")
     if "pypa/gh-action-pypi-publish" not in workflow_text:
         fail("release workflow is missing PyPI publication action")
+    _check_action_pins(workflow_text)
 
     tag = os.environ.get("GITHUB_REF_NAME") or os.environ.get("PDF2PDFA_RELEASE_TAG")
     if tag:
