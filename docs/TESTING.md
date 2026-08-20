@@ -2,7 +2,7 @@
 
 The v5 test strategy proves three separate things: the owned PDF engine behaves correctly, the owned PDF/A rule engine rejects/accepts the intended structures, and conversion preserves document semantics or appearance according to the repair performed.
 
-The repository intentionally has no push/pull-request CI workflow. Quality gates are run manually before merging and releasing.
+The repository intentionally has no push/pull-request CI workflow. Quality gates are run manually during development. The tag-triggered publication workflow repeats the complete owned release gate before PyPI publication.
 
 ## Fast quality gate
 
@@ -27,7 +27,7 @@ This also rebuilds wheel/sdist from scratch and runs `twine check`. Package meta
 python scripts/check.py --full
 ```
 
-The full gate adds an end-to-end smoke run for PDF/A-1b, 2b and 3b using only repository-owned runtime code. The 1b case deliberately includes transparency so the owned renderer/flattening/visual-fidelity path is exercised rather than only metadata normalization.
+The full gate adds package validation and an end-to-end smoke run for PDF/A-1b, 2b and 3b using only repository-owned runtime code. The 1b case deliberately includes transparency so the owned renderer/flattening/visual-fidelity path is exercised rather than only metadata normalization.
 
 No external PDF converter, validator or rasterizer is required by the full gate.
 
@@ -97,17 +97,20 @@ Unsupported or ambiguous structures need blocker tests as well. The correct resu
 
 Rendering is product code because visual fidelity and PDF/A-1 transparency repair depend on it.
 
-Component tests cover:
+Component and pipeline tests cover the production-reachable renderer, including:
 
-- matrix/path geometry;
-- clipping and filling;
-- affine-correct strokes;
+- matrix/path geometry, clipping and filling;
+- affine-correct strokes, caps/joins/dashes/hairlines and pattern strokes;
 - device and ICC color;
-- image sampling/masks/soft masks;
-- baseline JPEG;
-- text state and supported TrueType/CID text;
-- opacity and blend modes;
-- soft masks and supported transparency groups;
+- image sampling, masks/soft masks, baseline JPEG and CCITT Group 3/4/mixed fax;
+- TrueType/CIDFontType2, CFF1/CIDFontType0C, Type1 and Type3 rendering;
+- Type0 horizontal/vertical text state and owned CMap resolution;
+- shading types 1-7;
+- PatternType 1/2;
+- opacity, blend modes and soft masks;
+- isolated and RGB non-isolated transparency groups;
+- bounded knockout transactions;
+- annotation appearances;
 - page rotation and crop geometry.
 
 When a newly supported PDF painting primitive is added, include both a direct renderer test and a visual-fidelity/flattening test if that primitive can appear on pages requiring rewrite.
@@ -153,9 +156,24 @@ Generated fixtures are preferred because they are auditable down to the object d
 
 Some bugs depend on producer-specific or malformed byte layouts. In those cases a minimized binary fixture is acceptable only when redistribution is permitted and provenance is documented. Never commit confidential documents.
 
-Useful producer classes for a long-term corpus include office suites, browsers, CAD/GIS software, scanners/OCR tools, signed forms, CJK/CID documents and mixed print-color documents.
+A release-quality real-world corpus should include, when redistribution or local testing is permitted:
 
-A real-world fixture must not become an opaque oracle: its expected rule/repair behavior should be documented in the test.
+- office-suite output;
+- browser print-to-PDF output;
+- CAD/GIS and engineering software output;
+- scanner/OCR documents, including bilevel fax-style encodings;
+- signed forms;
+- CJK/CID documents;
+- mixed RGB/CMYK/ICC documents;
+- malformed-but-openable producer output.
+
+A real-world fixture must not become an opaque oracle: its expected rule/repair behavior should be documented in the test or qualification notes.
+
+## Independent oracle qualification
+
+The production package intentionally does not depend on third-party PDF engines or validators. Release qualification may still compare representative outputs against independent tools such as veraPDF, qpdf, MuPDF or Ghostscript.
+
+These tools are **qualification oracles**, not runtime dependencies. A disagreement must be investigated rather than automatically treating either side as authoritative. This reduces the risk that the owned converter and owned validator share the same interpretation bug.
 
 ## Fuzz/property direction
 
@@ -167,21 +185,27 @@ The parser, filter decoders, CMap/font parsers, ICC parser and content parser ar
 - writer output can always be reparsed by the owned parser;
 - validator never reports compliant after an internal parse/classification failure relevant to PDF/A.
 
-## Cross-platform manual smoke testing
+## Cross-platform qualification
 
 Before a significant release, exercise at least one supported Python on Windows, macOS and Linux when practical. Platform-sensitive areas are now mostly filesystem semantics, atomic replacement, path handling, temporary directories and Python-version behavior—not discovery of external executables.
+
+At minimum, the canonical gate should pass on the environment used to create the release tag. Cross-platform failures discovered after release become release blockers for the next patch rather than being silently ignored.
 
 ## Before release
 
 A release candidate should satisfy all of the following:
 
-1. `python scripts/check.py --full` passes;
+1. `python scripts/check.py --full` passes on the exact release candidate commit;
 2. wheel/sdist build and pass `twine check`;
 3. `python scripts/release_check.py` passes;
 4. `pyproject.toml` declares zero runtime dependencies;
 5. ownership and module-graph tests pass;
 6. no known unsupported rendering/codec path is mislabeled as supported;
-7. README/compliance limitations match current engine coverage;
+7. README/compliance/renderer-support limitations match current engine coverage;
 8. no known regression is hidden by an unjustified skip;
 9. `.github/workflows/` contains only the tag-triggered release workflow;
-10. the release tag equals `v<project.version>`.
+10. `THIRD_PARTY_NOTICES.md` is present and included by package license metadata;
+11. representative real-world PDFs have been exercised where available;
+12. independent-oracle disagreements, if any, are understood and documented;
+13. the release tag equals `v<project.version>`;
+14. the tag-triggered workflow repeats `python scripts/check.py --full` before PyPI publication.
