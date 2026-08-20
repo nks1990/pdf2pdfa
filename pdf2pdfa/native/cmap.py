@@ -1,10 +1,14 @@
 """Owned parser for CMaps that map Type0 character codes to CIDs.
 
-The implementation supports local codespaces/cidchar/cidrange mappings plus a
-single inherited base CMap.  A base may come from a PDF stream `/UseCMap`
-dictionary entry or a PostScript `/Name usecmap` operator.  Child mappings take
-precedence over the base.  Named CMaps are resolved only through an explicit
-owned registry callback; unknown names never fall back to a system CMap.
+The implementation supports local codespaces, cidchar/cidrange mappings,
+notdefchar/notdefrange fallback mappings and a single inherited base CMap. A
+base may come from a PDF stream `/UseCMap` dictionary entry or a PostScript
+`/Name usecmap` operator. Child CID mappings take precedence over inherited CID
+mappings; notdef mappings are consulted only when no ordinary CID mapping
+exists anywhere in the inheritance chain.
+
+Named CMaps are resolved only through an explicit owned registry callback;
+unknown names never fall back to a system CMap.
 """
 
 from __future__ import annotations
@@ -72,6 +76,24 @@ class CIDRange:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class NotDefRange:
+    start: int
+    end: int
+    code_length: int
+    cid: int
+
+    def lookup(self, raw: bytes) -> int | None:
+        if len(raw) != self.code_length:
+            return None
+        code = int.from_bytes(raw, "big")
+        if self.start <= code <= self.end:
+            # Adobe CMap notdefrange maps every code in the range to ONE CID;
+            # unlike cidrange the destination is not incremented.
+            return self.cid
+        return None
+
+
 class CIDCMap:
     def __init__(
         self,
@@ -79,6 +101,8 @@ class CIDCMap:
         codespaces: Iterable[CodeSpace] = (),
         cid_chars: dict[bytes, int] | None = None,
         cid_ranges: Iterable[CIDRange] = (),
+        notdef_chars: dict[bytes, int] | None = None,
+        notdef_ranges: Iterable[NotDefRange] = (),
         vertical: bool | None = None,
         base: "CIDCMap | None" = None,
         name: str = "",
@@ -86,6 +110,8 @@ class CIDCMap:
         self.local_codespaces = tuple(codespaces)
         self.cid_chars = dict(cid_chars or {})
         self.cid_ranges = tuple(cid_ranges)
+        self.notdef_chars = dict(notdef_chars or {})
+        self.notdef_ranges = tuple(notdef_ranges)
         self.base = base
         self.name = name
         if not self.local_codespaces and base is None:
@@ -124,6 +150,8 @@ class CIDCMap:
         codespaces: list[CodeSpace] = []
         cid_chars: dict[bytes, int] = {}
         ranges: list[CIDRange] = []
+        notdef_chars: dict[bytes, int] = {}
+        notdef_ranges: list[NotDefRange] = []
         vertical: bool | None = None
         content_base: CIDCMap | None = None
         index = 0
@@ -186,19 +214,21 @@ class CIDCMap:
                         codespaces.append(CodeSpace(low, high, len(low_raw)))
                         index += 2
                     continue
-                if operator == b"begincidchar":
+                if operator in {b"begincidchar", b"beginnotdefchar"}:
+                    target = cid_chars if operator == b"begincidchar" else notdef_chars
+                    label = "cidchar" if operator == b"begincidchar" else "notdefchar"
                     index += 2
                     for _ in range(count):
                         if index + 1 >= len(tokens):
-                            raise CMapError("truncated cidchar")
+                            raise CMapError(f"truncated {label}")
                         raw = _hex(tokens[index])
                         try:
                             cid = int(tokens[index + 1])
                         except ValueError as exc:
-                            raise CMapError("cidchar destination is not an integer") from exc
+                            raise CMapError(f"{label} destination is not an integer") from exc
                         if cid < 0:
-                            raise CMapError("cidchar destination cannot be negative")
-                        cid_chars[raw] = cid
+                            raise CMapError(f"{label} destination cannot be negative")
+                        target[raw] = cid
                         index += 2
                     continue
                 if operator == b"begincidrange":
@@ -223,6 +253,28 @@ class CIDCMap:
                         ranges.append(CIDRange(start, end, len(low_raw), cid))
                         index += 3
                     continue
+                if operator == b"beginnotdefrange":
+                    index += 2
+                    for _ in range(count):
+                        if index + 2 >= len(tokens):
+                            raise CMapError("truncated notdefrange")
+                        low_raw = _hex(tokens[index])
+                        high_raw = _hex(tokens[index + 1])
+                        try:
+                            cid = int(tokens[index + 2])
+                        except ValueError as exc:
+                            raise CMapError("notdefrange destination is not an integer") from exc
+                        if cid < 0:
+                            raise CMapError("notdefrange destination cannot be negative")
+                        if len(low_raw) != len(high_raw):
+                            raise CMapError("notdefrange bounds have different lengths")
+                        start = int.from_bytes(low_raw, "big")
+                        end = int.from_bytes(high_raw, "big")
+                        if end < start:
+                            raise CMapError("notdefrange end precedes start")
+                        notdef_ranges.append(NotDefRange(start, end, len(low_raw), cid))
+                        index += 3
+                    continue
             index += 1
 
         selected_base = content_base or base
@@ -230,13 +282,14 @@ class CIDCMap:
             codespaces=codespaces,
             cid_chars=cid_chars,
             cid_ranges=ranges,
+            notdef_chars=notdef_chars,
+            notdef_ranges=notdef_ranges,
             vertical=vertical,
             base=selected_base,
             name=name,
         )
 
-    def code_to_cid(self, raw: bytes) -> int | None:
-        # Child CMap differences are authoritative over inherited mappings.
+    def _defined_cid(self, raw: bytes) -> int | None:
         if raw in self.cid_chars:
             return self.cid_chars[raw]
         for item in self.cid_ranges:
@@ -244,8 +297,25 @@ class CIDCMap:
             if cid is not None:
                 return cid
         if self.base is not None:
-            return self.base.code_to_cid(raw)
+            return self.base._defined_cid(raw)
         return None
+
+    def _notdef_cid(self, raw: bytes) -> int | None:
+        if raw in self.notdef_chars:
+            return self.notdef_chars[raw]
+        for item in self.notdef_ranges:
+            cid = item.lookup(raw)
+            if cid is not None:
+                return cid
+        if self.base is not None:
+            return self.base._notdef_cid(raw)
+        return None
+
+    def code_to_cid(self, raw: bytes) -> int | None:
+        # Ordinary mappings from child/base are authoritative. notdef is a
+        # fallback only after the complete usecmap chain has no ordinary CID.
+        cid = self._defined_cid(raw)
+        return cid if cid is not None else self._notdef_cid(raw)
 
     def decode(self, data: bytes) -> list[tuple[bytes, int]]:
         output: list[tuple[bytes, int]] = []

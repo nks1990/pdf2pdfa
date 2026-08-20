@@ -8,7 +8,7 @@ version = "5.0.0"
 description = "Dependency-free PDF to PDF/A conversion, validation and fidelity using a repository-owned engine"
 authors = [{name = "nks1990", email = "nks1990@users.noreply.github.com"}]
 license = "MIT"
-license-files = ["LICENSE"]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 readme = "README.md"
 requires-python = ">=3.10"
 keywords = ["pdf", "pdfa", "archiving", "digital-preservation", "pdf-parser", "pdf-validator"]
