@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/nks1990/pdf2pdfa/blob/main/docs/agent-protocol-v1.schema.json",
+  "title": "pdf2pdfa agent protocol v1",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "pdf2pdfa_version",
+    "ok",
+    "status",
+    "exit_code",
+    "command"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "pdf2pdfa_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "converted",
+        "passthrough",
+        "completed",
+        "partial_failure",
+        "compliant",
+        "repairable",
+        "invalid",
+        "blocked",
+        "invalid_input",
+        "operational_error",
+        "usage_error",
+        "interrupted"
+      ]
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [0, 1, 2, 130]
+    },
+    "command": {
+      "type": ["string", "null"]
+    },
+    "result": {
+      "type": "object"
+    },
+    "error": {
+      "$ref": "#/$defs/error"
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["result"],
+      "not": {"required": ["error"]}
+    },
+    {
+      "required": ["error"],
+      "not": {"required": ["result"]}
+    }
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "error": {
+      "type": "object",
+      "required": ["code", "type", "category", "message", "retryable"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "INPUT_NOT_FOUND",
+            "INPUT_LIMIT_EXCEEDED",
+            "INVALID_PASSWORD",
+            "UNSUPPORTED_SECURITY_HANDLER",
+            "SIGNATURE_INVALIDATION_BLOCKED",
+            "UNSUPPORTED_REPAIR",
+            "FIDELITY_REJECTED",
+            "OWNED_VALIDATION_FAILED",
+            "INVALID_PDF",
+            "INVALID_SECURITY_STRUCTURE",
+            "INVALID_ARGUMENT",
+            "IO_ERROR",
+            "PIPELINE_ERROR",
+            "USAGE_ERROR",
+            "INTERRUPTED",
+            "INTERNAL_ERROR"
+          ]
+        },
+        "type": {"type": "string"},
+        "category": {
+          "type": "string",
+          "enum": [
+            "invalid_input",
+            "blocked",
+            "operational_error",
+            "usage_error",
+            "interrupted"
+          ]
+        },
+        "message": {"type": "string"},
+        "retryable": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    }
+  }
+}
