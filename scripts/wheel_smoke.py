@@ -69,8 +69,9 @@ def _inspect_wheel(wheel: Path) -> None:
                 "wheel-smoke: missing wheel license/notices: " + ", ".join(missing)
             )
 
-        if "pdf2pdfa/py.typed" not in names:
-            raise SystemExit("wheel-smoke: pdf2pdfa/py.typed is missing from wheel")
+        for required in ("pdf2pdfa/py.typed", "pdf2pdfa/agent_protocol.py"):
+            if required not in names:
+                raise SystemExit(f"wheel-smoke: {required} is missing from wheel")
 
 
 def main() -> int:
@@ -111,6 +112,18 @@ def main() -> int:
             "print('installed-module-scan:', len(set(mods)), 'modules OK')"
         )
         _run(str(python), "-c", import_scan, cwd=ROOT / "scripts")
+
+        protocol_scan = (
+            "import pdf2pdfa; "
+            "from pdf2pdfa.agent_protocol import MACHINE_SCHEMA_VERSION, envelope, error_payload; "
+            "assert MACHINE_SCHEMA_VERSION == '1'; "
+            "assert pdf2pdfa.MACHINE_SCHEMA_VERSION == '1'; "
+            "p=envelope('validate', ok=True, status='compliant', exit_code=0, result={}); "
+            "assert p['schema_version'] == '1' and p['pdf2pdfa_version'] == pdf2pdfa.__version__; "
+            "assert error_payload(FileNotFoundError('x'))['code'] == 'INPUT_NOT_FOUND'; "
+            "print('installed-agent-protocol: schema v1 OK')"
+        )
+        _run(str(python), "-c", protocol_scan, cwd=ROOT / "scripts")
 
         # Run from the scripts directory so the repository root is not placed
         # on sys.path ahead of site-packages. This exercises the installed
