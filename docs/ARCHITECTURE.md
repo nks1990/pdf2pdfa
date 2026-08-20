@@ -47,7 +47,7 @@ A failure before the final `os.replace` leaves an existing destination untouched
 
 `pyproject.toml` declares `dependencies = []`. `tests/owned/test_package_ownership.py` scans all distributed Python source and rejects runtime imports outside the standard library or `pdf2pdfa` itself.
 
-Build/test tools are development tooling, not runtime dependencies.
+Build/test tools are development tooling, not runtime dependencies. Compiled standards mapping data such as selected Adobe CMaps is versioned as inert repository data with provenance/license notices; it is never executed as external PostScript code.
 
 ## Core object model
 
@@ -114,9 +114,9 @@ A failure that does not have a proven repair is never guessed away.
 
 ### `native/repair_owned.py`
 
-Extends structural repair with rendering-aware operations. Today its key role is selective PDF/A-1 transparency flattening. It maps used transparency failures to concrete pages and refuses annotation appearance cases that cannot be preserved safely.
+Extends structural repair with rendering-aware operations. Its key production role is selective PDF/A-1 transparency flattening and annotation appearance repair. It maps used transparency failures to concrete pages and refuses rendering cases that cannot be preserved exactly by the owned renderer.
 
-## Fonts
+## Fonts and text
 
 ### `native/ttf.py`, `native/truetype.py`
 
@@ -124,13 +124,27 @@ Parse SFNT/TrueType tables, cmap, metrics, embedding permissions and glyph outli
 
 ### `native/font_embed.py`
 
-Embeds explicitly supplied font programs only when character/glyph mapping can be proven. It never searches system fonts and silently substitutes a look-alike.
+Embeds explicitly supplied font programs only when character/glyph mapping can be proven. It never searches system fonts or silently substitutes a look-alike.
 
-### `native/cmap.py`, `native/pdf_font.py`, `native/text_render.py`
+### `native/cff.py`, `native/cff_pdf_font.py`, `native/cff_text_render.py`
 
-Interpret supported PDF simple and Type0/CIDFontType2 text resources, CMaps, widths and text state for owned rendering.
+Own CFF1 / Type2 CharString parsing and PDF Type1C/CIDFontType0C rendering, including CID FDSelect, local/global subroutines, widths and per-FD FontMatrix composition.
 
-Unsupported CFF/Type1/Type3/predefined-CMap paths fail explicitly until the corresponding owned interpreter exists.
+### `native/type1.py`, `native/type1_pdf_font.py`, `native/type1_*`
+
+Own embedded Type1 PFA/PFB handling, Adobe StandardEncoding/Differences, `seac` composites and standard OtherSubrs/Flex behavior used by production rendering.
+
+### `native/type3_font.py`
+
+Executes Type3 CharProcs through the owned graphics interpreter with PDF text-rendering-mode semantics and 2D FontMatrix advances.
+
+### `native/cmap.py`, `native/cmap_registry.py`, `native/predefined_cmap_data.py`
+
+Own Type0 CMap parsing/resolution, `usecmap` inheritance, `notdef` fallback semantics and the predefined CMap registry. `Identity-H`/`Identity-V` are algorithmic. Selected Adobe-Japan1 `90ms-RKSJ-H`/`90ms-RKSJ-V` mappings are compiled into inert repository data. Other predefined families fail closed until their mapping data is explicitly owned and tested.
+
+### `native/pdf_font.py`, `native/text_render.py`, `native/vertical_metrics.py`
+
+Interpret PDF simple and Type0 font resources, widths, horizontal/vertical metrics and text state shared by the TrueType/CFF/Type1 paths.
 
 ## Color and images
 
@@ -142,11 +156,11 @@ Interpret device, calibrated, ICC, Indexed, Separation/DeviceN-related color tra
 
 Parse ICC structures, perform owned transforms and generate default archival profiles in source rather than bundling opaque third-party profile blobs.
 
-### `native/jpeg.py`, `native/image.py`
+### `native/jpeg.py`, `native/image.py`, `native/ccitt.py`, `native/fax.py`
 
-Decode baseline JPEG and generic packed/filtered image data, applying Decode arrays, image masks, color-key masks, explicit masks and soft masks.
+Decode baseline JPEG, generic packed/filtered image data and CCITT Group 3/4/mixed fax. The image engine applies Decode arrays, image masks, color-key masks, explicit masks and soft masks.
 
-Terminal codecs that do not yet have owned decoders (currently JPX/JBIG2/CCITT in rendering paths) raise `UnsupportedImageError` rather than calling a system/image library.
+JPX/JPEG 2000 and JBIG2 remain fail-closed when rendering requires their pixels. The runtime never shells out to an image utility or imports an image package.
 
 ## Renderer
 
@@ -154,25 +168,43 @@ Terminal codecs that do not yet have owned decoders (currently JPX/JBIG2/CCITT i
 
 Pure-Python RGBA surface, matrix/path primitives, scan conversion, clipping and compositing.
 
-### `native/page_render.py`, `native/render.py`
+### `native/page_render.py`, `native/render.py`, `native/owned_renderer.py`
 
-Interpret supported PDF painting operators, graphics state, paths, text, images and Form XObjects. The renderer is fail-closed: an unsupported operator/resource aborts fidelity/flattening.
+Interpret and compose the production PDF painting model: graphics state, vector paths, text, images, Form XObjects, annotations, patterns, shadings and transparency. The renderer is fail-closed: an unsupported operator/resource aborts fidelity/flattening rather than approximating.
 
-### `native/affine_stroke.py`
+### `native/affine_stroke.py`, `native/pattern_stroke.py`
 
-Preserves stroke geometry under nontrivial affine transforms rather than approximating line widths in device space.
+Preserve stroke geometry under nontrivial affine transforms and route pattern-colored strokes through the owned pattern engine.
 
-### `native/transparency_render.py`
+### `native/shading_dispatch.py`, `native/function_shading.py`, `native/mesh_shading.py`, `native/patch_shading.py`
 
-Adds opacity, blend modes, soft masks and isolated transparency groups. Non-isolated and knockout groups remain explicit unsupported branches until their backdrop semantics are implemented.
+Implement production-reachable ShadingType 1-7. All shadings are staged as one graphical object before outer clip, constant alpha, soft-mask and blend state are applied.
+
+### `native/pattern_render.py`, `native/tiling_pattern.py`, `native/uncolored_pattern.py`
+
+Implement PatternType 2 shading patterns and PatternType 1 colored/bounded-uncolored tiling patterns.
+
+### `native/transparency_render.py`, `native/nonisolated_transparency.py`
+
+Implement opacity, blend modes, soft masks, isolated groups and RGB non-isolated transparency groups.
+
+### `native/knockout.py`, `native/knockout_transparency.py`
+
+Provide bounded knockout support using independent shape and opacity/group-alpha state. Supported graphical objects execute as one owned transaction; advanced cases that cannot yet preserve exact object provenance fail closed.
+
+### `native/annotation_render.py`, `native/annotation_flatten.py`
+
+Render normal annotation appearances and support static PDF/A-1 appearance repair where display geometry/resources can be reproduced exactly.
+
+The detailed production matrix and remaining blockers live in `docs/RENDERER_SUPPORT.md`.
 
 ## PDF/A-1 flattening
 
 ### `native/flatten.py`
 
-A page requiring supported transparency repair is rendered in unrotated page user space, flattened to opaque RGB and embedded as a Flate image XObject. `/Rotate`, page boxes and annotations are preserved. Old painting resources are detached so forbidden transparent resources do not remain reachable only because they were once referenced by the page.
+A page requiring supported transparency repair is rendered in unrotated page user space, flattened to opaque RGB and embedded as a Flate image XObject. `/Rotate`, page boxes and supported annotation appearance semantics are preserved. Old painting resources are detached so forbidden transparent resources do not remain reachable only because they were once referenced by the page.
 
-Annotation appearance streams must be resource-independent before page-resource detachment; otherwise flattening fails.
+Unsupported rendering/annotation geometry is a blocker rather than a reason to silently rasterize incorrectly.
 
 ## Fidelity
 
@@ -209,6 +241,14 @@ Applied signatures are detected before rewriting and refused by default because 
 
 `cli.py` uses `argparse` from the standard library. Backend/validator executable options do not exist.
 
+## Release architecture
+
+There is intentionally no push/pull-request CI. Local development uses `python scripts/check.py --full` as the canonical release gate.
+
+The only GitHub Actions workflow is tag-triggered publication. On a `v<version>` tag it installs the project with development tooling, reruns the complete owned gate, rebuilds/verifies the distributions and publishes only after all gates pass.
+
+Independent PDF tools may be used during release qualification as external oracles, but they are never runtime dependencies and never participate in production conversion decisions.
+
 ## Design invariants
 
 1. Validation is mandatory after every rewrite.
@@ -221,3 +261,4 @@ Applied signatures are detected before rewriting and refused by default because 
 8. Existing conforming unencrypted input is preserved byte-for-byte.
 9. The final destination update is atomic.
 10. Unsupported is an acceptable result; silent semantic damage is not.
+11. A release tag cannot publish to PyPI before the complete owned release gate passes.
