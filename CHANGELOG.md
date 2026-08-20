@@ -73,24 +73,30 @@ All notable changes are documented here. The project follows semantic versioning
 - Added native visual fidelity that renders source/candidate through the same owned renderer and compares RGB pixels in memory.
 - Added `auto`, `semantic`, `visual` and `off` modes; `auto` upgrades to visual fidelity when page painting is intentionally rewritten.
 
-### Public API and CLI
+### Public API, CLI and agents
 
 - Replaced backend-oriented `Converter` with the owned `OwnedPDFAPipeline` facade.
 - Added `Converter.inspect()`, `Converter.validate()` and conversion-plan results.
+- `inspect()` now follows the same pre-repair preparation path as conversion, including input limits, decryption, signature policy, explicit font preprocessing and target-profile serialization.
 - Removed backend selection and optional validator switches.
 - Replaced Click with stdlib `argparse`.
 - CLI commands are `convert`, `batch`, `inspect`/`preflight` and `validate`.
-- Added JSON output for inspection, conversion and validation workflows.
+- Added `pdf2pdfa --version` and machine JSON output for all headless workflows.
+- Added versioned agent protocol schema `1` with top-level `ok`, `status`, `exit_code`, `command`, `pdf2pdfa_version` and structured `result`/`error` envelopes.
+- Added stable machine error codes/categories for invalid input, blockers, operational failures, usage errors and interrupts; `--json` no longer emits human stderr for these responses.
+- Added a formal JSON Schema and agent/headless integration guide; future MCP/HTTP adapters can reuse `pdf2pdfa.agent_protocol` without adding runtime dependencies to the core.
 
 ### Tests and release engineering
 
 - Replaced legacy pikepdf/Ghostscript/veraPDF fixtures with generated owned-engine fixtures and native regression suites.
 - Added module-graph integrity tests to catch missing internal modules/import failures.
-- Added public API and package-ownership contracts.
+- Added public API, agent CLI/schema and package-ownership contracts.
 - Added focused renderer/flattening regressions for advanced font, image, pattern, shading and transparency paths.
 - Replaced external-tool E2E smoke tests with owned 1b/2b/3b conversion/validation/fidelity smoke tests.
+- Added real-world corpus qualification and independent-oracle development tooling without introducing runtime dependencies.
+- Added isolated built-wheel smoke testing so the artifact destined for PyPI is installed with `--no-deps`, metadata/import-checked and exercised through the owned E2E path.
 - Push/pull-request CI remains intentionally disabled.
-- The tag-triggered PyPI workflow now runs the complete owned release gate before publication, including pytest, package build/twine checks and 1b/2b/3b end-to-end smoke tests.
+- The tag-triggered PyPI workflow runs the complete owned release gate before publication and is pinned to immutable action SHAs.
 
 ### Fail-closed gaps
 
