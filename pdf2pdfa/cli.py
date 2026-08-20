@@ -29,6 +29,11 @@ def _max_bytes(mib: int | None) -> int | None:
     return None if mib is None else mib * 1024 * 1024
 
 
+def _require_positive_mib(value: int | None) -> None:
+    if value is not None and value <= 0:
+        raise ValueError("--max-input-mib must be positive")
+
+
 def _validation_dict(report: ValidationReport) -> dict[str, object]:
     return {
         "level": report.level,
@@ -82,8 +87,7 @@ def _add_common_conversion_options(parser: argparse.ArgumentParser) -> None:
 
 
 def _converter(args: argparse.Namespace) -> Converter:
-    if args.max_input_mib is not None and args.max_input_mib <= 0:
-        raise ValueError("--max-input-mib must be positive")
+    _require_positive_mib(args.max_input_mib)
     return Converter(
         level=args.level,
         fidelity=args.fidelity,
@@ -132,6 +136,7 @@ def _parser() -> argparse.ArgumentParser:
     validate = sub.add_parser("validate", help="validate with the owned PDF/A rule engine")
     validate.add_argument("input")
     validate.add_argument("--level", choices=LEVELS, default="2b")
+    validate.add_argument("--max-input-mib", type=int)
     validate.add_argument("--json", action="store_true", dest="json_output")
 
     return parser
@@ -205,8 +210,7 @@ def _batch(args: argparse.Namespace) -> int:
 
 
 def _inspect(args: argparse.Namespace) -> int:
-    if args.max_input_mib is not None and args.max_input_mib <= 0:
-        raise ValueError("--max-input-mib must be positive")
+    _require_positive_mib(args.max_input_mib)
     converter = Converter(
         level=args.level,
         max_input_bytes=_max_bytes(args.max_input_mib),
@@ -230,7 +234,11 @@ def _inspect(args: argparse.Namespace) -> int:
 
 
 def _validate(args: argparse.Namespace) -> int:
-    report = Converter(level=args.level).validate(args.input)
+    _require_positive_mib(args.max_input_mib)
+    report = Converter(
+        level=args.level,
+        max_input_bytes=_max_bytes(args.max_input_mib),
+    ).validate(args.input)
     if args.json_output:
         print(json.dumps(_validation_dict(report), indent=2, sort_keys=True))
     else:
