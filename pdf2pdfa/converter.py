@@ -10,6 +10,7 @@ from .native.document import PDFDocument
 from .native.pdfa import NativePDFAValidator, ValidationReport, policy
 from .native.pipeline import (
     FidelityMode,
+    InputLimitError,
     OwnedConversionResult,
     OwnedPDFAPipeline,
     _has_applied_signature,
@@ -38,12 +39,30 @@ class InspectionResult:
         return not self.plan.blockers
 
 
-def _read(source: str | Path | bytes) -> bytes:
+def _read(
+    source: str | Path | bytes,
+    max_input_bytes: int | None = None,
+) -> bytes:
     if isinstance(source, bytes):
-        return source
+        data = source
+        if not data:
+            raise ValueError("input PDF is empty")
+        if max_input_bytes is not None and len(data) > max_input_bytes:
+            raise InputLimitError(
+                f"input PDF is {len(data)} bytes, exceeding configured limit {max_input_bytes}"
+            )
+        return data
+
     path = Path(source).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(path)
+    size = path.stat().st_size
+    if size <= 0:
+        raise ValueError(f"input PDF is empty: {path}")
+    if max_input_bytes is not None and size > max_input_bytes:
+        raise InputLimitError(
+            f"input PDF is {size} bytes, exceeding configured limit {max_input_bytes}"
+        )
     data = path.read_bytes()
     if not data:
         raise ValueError(f"input PDF is empty: {path}")
@@ -99,6 +118,8 @@ class Converter:
         visual_max_changed_pixel_ratio: float = 0.01,
     ) -> None:
         self.level = policy(level).level
+        if max_input_bytes is not None and max_input_bytes <= 0:
+            raise ValueError("max_input_bytes must be positive")
         self.max_input_bytes = max_input_bytes
         self.allow_signature_invalidation = allow_signature_invalidation
         self.allow_attachment_removal = allow_attachment_removal
@@ -122,7 +143,7 @@ class Converter:
         level: str | None = None,
     ) -> ValidationReport:
         """Validate *source* with the owned PDF/A conformance engine."""
-        data = _read(source)
+        data = _read(source, self.max_input_bytes)
         return NativePDFAValidator().validate(data, policy(level or self.level).level)
 
     def inspect(
@@ -134,11 +155,7 @@ class Converter:
     ) -> InspectionResult:
         """Return conformance plus the conversion blockers/repair plan, without writing."""
         target = policy(level or self.level)
-        data = _read(source)
-        if self.max_input_bytes is not None and len(data) > self.max_input_bytes:
-            raise ValueError(
-                f"input PDF is {len(data)} bytes, exceeding configured limit {self.max_input_bytes}"
-            )
+        data = _read(source, self.max_input_bytes)
         working, encrypted = _plaintext_for_inspection(
             data,
             level=target.level,
