@@ -56,8 +56,18 @@ def main() -> int:
 
     manifest_path = ROOT / "MANIFEST.in"
     manifest = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else ""
-    if "include THIRD_PARTY_NOTICES.md" not in manifest.splitlines():
+    manifest_lines = manifest.splitlines()
+    if "include THIRD_PARTY_NOTICES.md" not in manifest_lines:
         fail("MANIFEST.in must include THIRD_PARTY_NOTICES.md")
+    schema_packaged = (
+        "include docs/agent-protocol-v1.schema.json" in manifest_lines
+        or any(
+            line.startswith("recursive-include docs") and "*.json" in line.split()
+            for line in manifest_lines
+        )
+    )
+    if not schema_packaged:
+        fail("MANIFEST.in must include the agent protocol JSON schema")
 
     expected = [
         ROOT / "README.md",
@@ -87,6 +97,7 @@ def main() -> int:
         ROOT / "scripts" / "wheel_smoke.py",
         ROOT / "tests" / "native" / "test_native_module_graph.py",
         ROOT / "tests" / "owned" / "test_agent_cli.py",
+        ROOT / "tests" / "owned" / "test_agent_protocol_schema.py",
         ROOT / "tests" / "owned" / "test_package_ownership.py",
     ]
     missing = [str(path.relative_to(ROOT)) for path in expected if not path.exists()]
