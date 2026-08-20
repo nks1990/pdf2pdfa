@@ -66,10 +66,12 @@ def main() -> int:
         ROOT / "SECURITY.md",
         ROOT / "CONTRIBUTING.md",
         ROOT / "MANIFEST.in",
+        ROOT / "docs" / "AGENT_INTEGRATION.md",
         ROOT / "docs" / "ARCHITECTURE.md",
         ROOT / "docs" / "COMPLIANCE.md",
         ROOT / "docs" / "RENDERER_SUPPORT.md",
         ROOT / "docs" / "TESTING.md",
+        ROOT / "pdf2pdfa" / "agent_protocol.py",
         ROOT / "pdf2pdfa" / "native" / "document.py",
         ROOT / "pdf2pdfa" / "native" / "pdfa.py",
         ROOT / "pdf2pdfa" / "native" / "pipeline.py",
@@ -82,11 +84,16 @@ def main() -> int:
         ROOT / "scripts" / "e2e_smoke.py",
         ROOT / "scripts" / "wheel_smoke.py",
         ROOT / "tests" / "native" / "test_native_module_graph.py",
+        ROOT / "tests" / "owned" / "test_agent_cli.py",
         ROOT / "tests" / "owned" / "test_package_ownership.py",
     ]
     missing = [str(path.relative_to(ROOT)) for path in expected if not path.exists()]
     if missing:
         fail("missing release files: " + ", ".join(missing))
+
+    protocol_text = (ROOT / "pdf2pdfa" / "agent_protocol.py").read_text(encoding="utf-8")
+    if 'MACHINE_SCHEMA_VERSION = "1"' not in protocol_text:
+        fail("agent machine protocol schema v1 contract is missing")
 
     workflow_dir = ROOT / ".github" / "workflows"
     workflows = (
