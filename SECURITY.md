@@ -56,7 +56,9 @@ New code in these areas should validate arithmetic bounds before allocation/iter
 
 ## Resource exhaustion
 
-`max_input_bytes` / `--max-input-mib` can reject large files before parsing, but file size alone is not a complete denial-of-service defense. Small PDFs can contain highly compressed streams, huge page/image dimensions, cyclic structures or expensive content.
+`max_input_bytes` / `--max-input-mib` can reject large files before parsing. File-backed `validate` and `inspect` check the file size before reading and recheck the bytes after reading; conversion applies the same pre/post-read boundary. This avoids treating validation/preflight as weaker ingestion paths.
+
+File size alone is not a complete denial-of-service defense. Small PDFs can contain highly compressed streams, huge page/image dimensions, cyclic structures or expensive content.
 
 Library-level safeguards should bound recursion, decoded sizes and suspicious counts. Applications that accept hostile uploads should additionally apply process/container CPU, memory, wall-clock and filesystem quotas.
 
@@ -72,7 +74,7 @@ Any new write path must preserve this invariant.
 
 A cryptographic PDF signature covers byte ranges. Any rewrite can invalidate those ranges even when the visible document is unchanged.
 
-Applied signatures are refused by default. Empty signature fields are not treated as applied signatures. Signature invalidation requires explicit opt-in.
+Applied signatures are refused by default when a rewrite is required. Empty signature fields are not treated as applied signatures. Signature invalidation requires explicit opt-in. `inspect` must expose the same applied-signature rewrite blocker as `convert` under the same policy; an already-conforming unencrypted source can still pass through byte-for-byte without invalidating its signature.
 
 `pdf2pdfa` detects signature presence for rewrite safety; it is not a cryptographic signature verifier or trust-chain validator.
 
@@ -110,11 +112,23 @@ Applications with strong confidentiality requirements should use encrypted stora
 
 ## Dependency and supply-chain policy
 
-The installed runtime declares zero third-party dependencies. `tests/owned/test_package_ownership.py` guards that architecture.
+The installed runtime declares zero third-party dependencies. `tests/owned/test_package_ownership.py` guards that architecture and rejects runtime escape hatches such as subprocess/native-library execution paths.
 
 Development/build tools such as pytest, setuptools, build and twine are not imported by the runtime package. They should still be obtained from trusted package sources and kept current for development/release work.
 
-The only GitHub workflow should remain the tag-triggered publication workflow; ordinary pushes and pull requests intentionally do not execute Actions.
+The only GitHub workflow is the release workflow; ordinary pushes and pull requests intentionally do not execute Actions. The privileged release workflow must:
+
+- trigger only for version tags;
+- verify the tagged commit is reachable from `main`;
+- use least-privilege repository permissions plus OIDC for PyPI;
+- avoid persisting checkout credentials;
+- pin every external GitHub Action to a full immutable commit SHA;
+- run the complete owned release gate before publication;
+- build and inspect the actual wheel, install it into an isolated venv and run the installed-wheel E2E smoke before PyPI upload.
+
+`scripts/release_check.py` guards these workflow invariants so release hardening cannot be silently weakened by an unrelated edit.
+
+Third-party standards **data** such as compiled Adobe CMap mappings is not executable runtime code, but its provenance/license must be documented in `THIRD_PARTY_NOTICES.md` and that notice must ship in source and wheel artifacts.
 
 ## Security changes checklist
 
@@ -124,5 +138,7 @@ For security-sensitive changes:
 2. verify failure is bounded and deterministic;
 3. verify destination atomicity where conversion is involved;
 4. avoid weakening fail-closed behavior to support a malformed file;
-5. run `python scripts/check.py --full` manually;
-6. document any newly supported parser/codec/security revision and its limits.
+5. run `python scripts/check.py --full` on the exact release candidate;
+6. document any newly supported parser/codec/security revision and its limits;
+7. verify the built-wheel smoke still passes;
+8. do not relax action pinning, tag provenance or OIDC release safeguards without an explicit security review.
