@@ -9,6 +9,7 @@ from pdf2pdfa.cli import main
 from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
 from pdf2pdfa.native.pipeline import InputLimitError
+from tests.native.font_fixture import make_test_ttf
 
 
 def _source(*, javascript: bool = False, applied_signature: bool = False) -> bytes:
@@ -51,6 +52,41 @@ def _source(*, javascript: bool = False, applied_signature: bool = False) -> byt
     return builder.to_bytes()
 
 
+def _unembedded_font_source() -> bytes:
+    builder = PDFBuilder(version="1.7")
+    font_ref = builder.add(
+        PDFDict(
+            {
+                "Type": PDFName("Font"),
+                "Subtype": PDFName("TrueType"),
+                "BaseFont": PDFName("OwnedTestFont"),
+                "Encoding": PDFName("WinAnsiEncoding"),
+                "FirstChar": 65,
+                "LastChar": 65,
+                "Widths": [600],
+            }
+        )
+    )
+    contents = builder.add(PDFStream(PDFDict(), b"BT /F1 12 Tf (A) Tj ET\n"))
+    pages = PDFDict({"Type": PDFName("Pages"), "Count": 1, "Kids": []})
+    pages_ref = builder.add(pages)
+    page_ref = builder.add(
+        PDFDict(
+            {
+                "Type": PDFName("Page"),
+                "Parent": pages_ref,
+                "MediaBox": [0, 0, 100, 100],
+                "Resources": PDFDict({"Font": PDFDict({"F1": font_ref})}),
+                "Contents": contents,
+            }
+        )
+    )
+    pages["Kids"] = [page_ref]
+    root = builder.add(PDFDict({"Type": PDFName("Catalog"), "Pages": pages_ref}))
+    builder.set_root(root)
+    return builder.to_bytes()
+
+
 def test_converter_public_api_is_owned_and_validates_every_output():
     with tempfile.TemporaryDirectory() as tempdir_name:
         output = Path(tempdir_name) / "archive.pdf"
@@ -70,6 +106,21 @@ def test_inspection_exposes_owned_repair_plan_without_writing():
     assert result.repairable
     assert result.validation.engine == "pdf2pdfa-owned"
     assert any("action" in operation.lower() or "javascript" in operation.lower() for operation in result.plan.operations)
+
+
+def test_inspection_simulates_explicit_font_preprocessing():
+    source = _unembedded_font_source()
+    without_font = Converter(level="2b").inspect(source)
+    assert without_font.fonts is None
+
+    with_font = Converter(level="2b").inspect(
+        source,
+        font_paths=[make_test_ttf()],
+    )
+    assert with_font.fonts is not None
+    assert with_font.fonts.embedded == 1
+    assert with_font.fonts.complete
+    assert "OwnedTestFont" not in with_font.fonts.missing
 
 
 def test_inspection_reports_applied_signature_rewrite_blocker():
@@ -137,6 +188,32 @@ def test_cli_inspect_signature_override_matches_converter_policy(capsys):
         intentional = json.loads(capsys.readouterr().out)
         assert code in (0, 2)
         assert all(item["code"] != "applied-signature" for item in intentional["plan"]["blockers"])
+
+
+def test_cli_inspect_reports_font_simulation(capsys):
+    with tempfile.TemporaryDirectory() as tempdir_name:
+        root = Path(tempdir_name)
+        source = root / "font.pdf"
+        font = root / "OwnedTestFont.ttf"
+        source.write_bytes(_unembedded_font_source())
+        font.write_bytes(make_test_ttf())
+
+        code = main(
+            [
+                "inspect",
+                str(source),
+                "--level",
+                "2b",
+                "--font",
+                str(font),
+                "--json",
+            ]
+        )
+        report = json.loads(capsys.readouterr().out)
+        assert code in (0, 2)
+        assert report["fonts"] is not None
+        assert report["fonts"]["embedded"] == 1
+        assert report["fonts"]["complete"] is True
 
 
 def test_cli_version_matches_package_metadata(capsys):
