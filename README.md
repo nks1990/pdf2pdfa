@@ -23,15 +23,19 @@ The owned engine contains its own:
 - content-stream parser;
 - PDF/A-1b/2b/3b rule engine;
 - XMP/ICC generation and validation;
-- font parsing/embedding and TrueType outline rendering;
+- TrueType/CID, CFF1, Type1 and Type3 font parsing/rendering paths;
+- horizontal and vertical Type0 text-state support;
+- owned predefined-CMap registry with `Identity-H`/`Identity-V` and compiled Adobe-Japan1 `90ms-RKSJ-H`/`90ms-RKSJ-V` mappings;
 - color-space and ICC transformations;
-- JPEG decoder and image compositor;
-- vector rasterizer, text/image/page renderer and transparency compositor;
+- baseline JPEG and CCITT Group 3/4/mixed fax decoding;
+- vector rasterizer, page renderer, patterns and shading types 1-7;
+- isolated and RGB non-isolated transparency compositing plus bounded knockout support;
+- annotation appearance rendering and PDF/A-1 appearance repair;
 - PDF/A-1 transparency flattening;
 - semantic and visual fidelity gates;
 - atomic publication.
 
-`tests/owned/test_package_ownership.py` enforces this boundary by scanning every distributed Python module and rejecting non-stdlib runtime imports.
+`tests/owned/test_package_ownership.py` enforces the runtime boundary by scanning every distributed Python module and rejecting non-stdlib imports.
 
 ## Installation
 
@@ -149,9 +153,18 @@ The validator reports structured failures with rule id, clause, message and PDF 
 
 Owning the engine also means not pretending an unimplemented decoder or painting primitive is safe. The converter raises an explicit blocker when a required transformation cannot yet be proven by owned code.
 
-The current renderer has strong coverage for vector paths, clipping, affine strokes, TrueType/CIDFontType2 text, device/ICC color, raw/filtered images, baseline JPEG, masks/soft masks, blend modes and isolated transparency groups. Work that still requires additional owned implementation is kept as an explicit unsupported path rather than delegated to a third party; examples include some CFF/Type1/Type3 text paths, several predefined CMaps, JPX/JBIG2/CCITT image decoding for rendering, and non-isolated/knockout transparency groups.
+The production-reachable renderer currently covers vector paths/clipping, affine and pattern strokes, TrueType/CIDFontType2, CFF1/CIDFontType0C, embedded Type1, Type3, horizontal/vertical Type0 text, device/ICC color, raw/filtered images, baseline JPEG, CCITT fax, masks/soft masks, blend modes, shading types 1-7, PatternType 1/2, isolated transparency groups, RGB non-isolated groups, bounded knockout rendering and normal annotation appearances.
 
-These limitations matter primarily when a page must be rendered for visual fidelity or PDF/A-1 flattening. PDF/A-2/3 structural conversion can preserve supported-by-profile encoded objects without decoding their pixels when no painting rewrite is needed.
+Remaining explicit renderer blockers include:
+
+- JPX / JPEG 2000 image decoding;
+- JBIG2 image decoding;
+- additional Adobe predefined non-Identity CMap families beyond the currently compiled Japan1 `90ms-RKSJ-H` / `90ms-RKSJ-V` mappings;
+- explicit non-RGB transparency-group blending spaces;
+- advanced knockout interactions where the renderer cannot yet preserve PDF object shape/opacity semantics exactly;
+- annotation display geometry that depends on `NoZoom`, `NoRotate` or `ToggleNoView`.
+
+These are **fail-closed** limitations. If conversion or fidelity requires an unsupported path, pdf2pdfa rejects the operation instead of approximating it or delegating it to external software. See [Renderer support](docs/RENDERER_SUPPORT.md) for the detailed matrix.
 
 ## Digital signatures
 
@@ -175,6 +188,7 @@ pdf2pdfa/
     pipeline.py         canonical conversion orchestration
     raster.py           owned raster surface/path engine
     page_render.py      PDF page interpreter
+    owned_renderer.py   production renderer composition
     transparency_render.py
     visual_fidelity.py
     ...
@@ -183,21 +197,21 @@ tests/
   owned/                package ownership and public API contracts
 ```
 
-See [Architecture](docs/ARCHITECTURE.md), [Compliance](docs/COMPLIANCE.md), [Testing](docs/TESTING.md), [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
+See [Architecture](docs/ARCHITECTURE.md), [Compliance](docs/COMPLIANCE.md), [Testing](docs/TESTING.md), [Renderer support](docs/RENDERER_SUPPORT.md), [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
 
 ## Development and release checks
 
-The repository intentionally has **no push/pull-request CI workflow**. Run the quality gate manually:
+The repository intentionally has **no push/pull-request CI workflow**. Run the quality gate before merging or tagging:
 
 ```bash
 python -m pip install -e ".[dev]"
 python scripts/check.py --full
 ```
 
-`--full` runs release sanity checks, the owned regression suite, package build/metadata checks and owned end-to-end conversion/validation/fidelity smoke tests for 1b, 2b and 3b.
+`--full` runs release sanity checks, the complete owned regression suite, package build/metadata checks and owned end-to-end conversion/validation/fidelity smoke tests for 1b, 2b and 3b.
 
-The only GitHub workflow is tag-triggered package publication; ordinary pushes and pull requests do not run Actions.
+The only GitHub workflow is tag-triggered PyPI publication. The release workflow repeats the full owned gate and publishes only if it passes, so a release tag cannot bypass tests, package checks or end-to-end smoke validation.
 
 ## License
 
-MIT.
+MIT. Compiled standards mapping data and its provenance/license notices are documented in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
