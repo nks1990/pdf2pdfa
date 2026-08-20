@@ -8,6 +8,7 @@ from pdf2pdfa import Converter, __version__
 from pdf2pdfa.cli import main
 from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
+from pdf2pdfa.native.pipeline import InputLimitError
 
 
 def _source(*, javascript: bool = False, applied_signature: bool = False) -> bytes:
@@ -82,6 +83,35 @@ def test_inspection_reports_applied_signature_rewrite_blocker():
         allow_signature_invalidation=True,
     ).inspect(source)
     assert all(item.code != "applied-signature" for item in intentional.plan.blockers)
+
+
+def test_validate_enforces_input_limit_before_parsing_bytes():
+    source = b"%PDF-1.7\n" + (b"x" * 1024)
+    converter = Converter(level="2b", max_input_bytes=128)
+    try:
+        converter.validate(source)
+    except InputLimitError as exc:
+        assert "exceeding configured limit" in str(exc)
+    else:
+        raise AssertionError("validate unexpectedly ignored max_input_bytes")
+
+
+def test_cli_validate_enforces_file_size_limit(capsys):
+    with tempfile.TemporaryDirectory() as tempdir_name:
+        source = Path(tempdir_name) / "oversized.pdf"
+        source.write_bytes(b"%PDF-1.7\n" + (b"x" * (1024 * 1024)))
+        assert main(
+            [
+                "validate",
+                str(source),
+                "--level",
+                "2b",
+                "--max-input-mib",
+                "1",
+            ]
+        ) == 2
+        captured = capsys.readouterr()
+        assert "exceeding configured limit" in captured.err
 
 
 def test_cli_inspect_signature_override_matches_converter_policy(capsys):
