@@ -39,19 +39,33 @@ All notable changes are documented here. The project follows semantic versioning
 - Encrypted input is decrypted in-process; passwords never leave the Python process.
 - Applied digital signatures remain blocked by default before a rewrite can invalidate them.
 
-### Fonts and rendering
+### Fonts and text rendering
 
 - Added owned SFNT/TrueType parser, cmap/metrics handling, safe font embedding and TrueType glyph outline rendering.
-- Added Type0/CIDFontType2 handling for owned rendering where encoding/CID mapping is understood.
-- Added color spaces, ICC transforms, function evaluation, JPEG decoding, image masks/soft masks and affine image painting.
-- Added pure-Python raster surface, vector paths, clipping, affine-correct strokes, text and page rendering.
-- Added transparency compositor with opacity, blend modes, soft masks and isolated transparency-group support.
+- Added Type0/CIDFontType2 rendering, shared Type0 CMap resolution and horizontal/vertical text state with DW2/W2 metrics.
+- Added repository-owned CFF1/Type2 CharString parsing and PDF Type1C/CIDFontType0C rendering, including CID FDSelect and per-FD FontMatrix handling.
+- Added embedded Type1 PFA/PFB parsing/rendering, Adobe StandardEncoding/Differences, `seac` composites and standard Flex/OtherSubrs behavior.
+- Added Type3 CharProc rendering, 2D FontMatrix advances and PDF text-rendering-mode semantics.
+- Added algorithmic `Identity-H`/`Identity-V` CMaps plus compiled Adobe-Japan1 `90ms-RKSJ-H`/`90ms-RKSJ-V` mappings with owned `usecmap` inheritance and notdef semantics.
 
-### PDF/A-1 transparency flattening
+### Images, color and page rendering
 
+- Added device and ICC color handling, owned ICC transforms and PDF Function evaluation.
+- Added raw/filtered image rendering, baseline JPEG decoding and CCITT Group 3/4/mixed fax decoding.
+- Added image masks, explicit masks and soft masks.
+- Added pure-Python raster surface, vector paths, clipping and affine-correct stroke rendering.
+- Added shading types 1-7, including axial/radial, function-based, Gouraud mesh, Coons patch and tensor-product patch shading.
+- Added PatternType 2 shading patterns and PatternType 1 colored/uncolored tiling patterns, including pattern strokes.
+- Added normal annotation appearance rendering and static PDF/A-1 annotation appearance repair.
+
+### Transparency and PDF/A-1 flattening
+
+- Added PDF blend modes, opacity, soft masks and isolated transparency groups.
+- Added RGB non-isolated transparency-group rendering using owned backdrop reconstruction.
+- Added bounded knockout transparency with independent shape and opacity handling for supported graphical-object classes.
 - Added selective owned raster flattening for pages whose used painting instructions require PDF/A-1 transparency removal.
 - Preserves page geometry and `/Rotate`, detaches forbidden transparency resources and embeds an opaque Flate RGB page image.
-- Annotation appearance streams are protected fail-closed when resource inheritance would make flattening ambiguous.
+- All owned shading types are staged as one graphical object before outer clip/alpha/soft-mask/blend application to prevent double transparency application.
 
 ### Fidelity
 
@@ -73,12 +87,23 @@ All notable changes are documented here. The project follows semantic versioning
 - Replaced legacy pikepdf/Ghostscript/veraPDF fixtures with generated owned-engine fixtures and native regression suites.
 - Added module-graph integrity tests to catch missing internal modules/import failures.
 - Added public API and package-ownership contracts.
+- Added focused renderer/flattening regressions for advanced font, image, pattern, shading and transparency paths.
 - Replaced external-tool E2E smoke tests with owned 1b/2b/3b conversion/validation/fidelity smoke tests.
-- Push/pull-request CI remains intentionally disabled; the only GitHub workflow is tag-triggered package publication.
+- Push/pull-request CI remains intentionally disabled.
+- The tag-triggered PyPI workflow now runs the complete owned release gate before publication, including pytest, package build/twine checks and 1b/2b/3b end-to-end smoke tests.
 
 ### Fail-closed gaps
 
-The v5 engine deliberately refuses a transformation when an owned implementation is not available. At this stage those paths include several CFF/Type1/Type3 text cases, predefined non-Identity CMaps, JPX/JBIG2/CCITT image decoding needed for rendering, and non-isolated/knockout transparency-group rendering. They are not delegated to external software.
+The v5 engine deliberately refuses a transformation when an exact owned implementation is not available. Remaining explicit renderer gaps include:
+
+- JPX / JPEG 2000 image decoding;
+- JBIG2 image decoding;
+- additional Adobe predefined non-Identity CMap families beyond the currently compiled Japan1 `90ms-RKSJ-H` / `90ms-RKSJ-V` data;
+- explicit non-RGB transparency-group blending spaces;
+- advanced knockout interactions such as `/AIS true`, `/TK false`, compound fill+stroke transactions, nested groups and masked/transparent image cases where object shape/opacity provenance is not yet exact;
+- annotation display geometry controlled by `NoZoom`, `NoRotate` or `ToggleNoView`.
+
+These paths are not approximated and are not delegated to external software.
 
 ## 4.0.0
 
