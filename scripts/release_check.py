@@ -107,6 +107,10 @@ def main() -> int:
         fail("release workflow must run the full owned gate before publication")
     if "pypa/gh-action-pypi-publish" not in workflow_text:
         fail("release workflow is missing PyPI publication action")
+    if "persist-credentials: false" not in workflow_text:
+        fail("release checkout must not persist Git credentials")
+    if "git merge-base --is-ancestor" not in workflow_text:
+        fail("release workflow must verify the tagged commit is reachable from main")
     _check_action_pins(workflow_text)
 
     tag = os.environ.get("GITHUB_REF_NAME") or os.environ.get("PDF2PDFA_RELEASE_TAG")
