@@ -1,18 +1,48 @@
 # Third-party notices
 
-`pdf2pdfa` is MIT-licensed. The following bundled data assets have separate permissive/public-domain terms.
+`pdf2pdfa` contains no third-party runtime library or external PDF engine. Some
+standards mapping **data** is derived from upstream public resources and is kept
+separate from the owned runtime implementation.
 
-## Compact ICC Profiles
+## Adobe CMap Resources
 
-The bundled files `pdf2pdfa/data/sRGB.icc.b64` and `pdf2pdfa/data/CMYK.icc.b64` are Base64 encodings of:
+Repository: `adobe-type-tools/cmap-resources`
 
-- `sRGB-v2-micro.icc`
-- `CGATS001Compat-v2-micro.icc`
+Currently compiled into `pdf2pdfa/native/predefined_cmap_data.py`:
 
-from **Compact ICC Profiles** by Ethan Lee / `saucecontrol` contributors.
+- Adobe-Japan1 `90ms-RKSJ-H` — upstream Git blob `89c83394e93d6568ba031f349b46fd883e76f755`
+- Adobe-Japan1 `90ms-RKSJ-V` — upstream Git blob `eeb6a28a93d970d0d74c7000cc185a117aaaddf0`
 
-Upstream project: `saucecontrol/Compact-ICC-Profiles` on GitHub.
+The Adobe resources are not executed by `pdf2pdfa`. Their mapping records are
+compiled into the owned `CodeSpace` / `CIDRange` / `NotDefRange` data model and
+are interpreted only by the repository-owned CMap engine.
 
-The upstream project releases all profiles in the collection to the public domain under **Creative Commons CC0 1.0 Universal**. These profiles are bundled to provide small, redistributable default RGB and CMYK color-space profiles without importing a restrictive profile license into the Python package.
+Adobe license text:
 
-The CMYK profile contains an `A2B0` mapping based on CGATS TR 001-1995 characterization data and is intended as a compact default source/display mapping. It is not presented as a press-specific output characterization profile. A caller that requires a specific printing condition should supply an appropriate ICC OutputIntent explicitly.
+> Copyright 1990-2023 Adobe. All rights reserved.
+>
+> Redistribution and use in source and binary forms, with or without
+> modification, are permitted provided that the following conditions are met:
+>
+> Redistributions of source code must retain the above copyright notice, this
+> list of conditions and the following disclaimer.
+>
+> Redistributions in binary form must reproduce the above copyright notice,
+> this list of conditions and the following disclaimer in the documentation
+> and/or other materials provided with the distribution.
+>
+> Neither the name of Adobe nor the names of its contributors may be used to
+> endorse or promote products derived from this software without specific
+> prior written permission.
+>
+> THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+> AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+> IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+> ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+> LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+> CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+> SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+> INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+> CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+> ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+> POSSIBILITY OF SUCH DAMAGE.

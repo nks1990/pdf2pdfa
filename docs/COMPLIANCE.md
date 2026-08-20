@@ -1,109 +1,185 @@
 # PDF/A compliance model
 
-`pdf2pdfa` distinguishes **conversion**, **standards conformance verification**, and **visual fidelity verification**.
+`pdf2pdfa` v5 implements its own PDF/A conformance rule engine for **1b, 2b and 3b**. Conversion and validation are part of the same owned architecture, but they are separate stages: writing PDF/A metadata never makes a candidate compliant by itself.
 
-A file is not considered verified merely because it contains `pdfaid:part` and `pdfaid:conformance` metadata. When validation is enabled, an external veraPDF result for the requested flavour is the conformance gate. Visual fidelity is a separate optional gate and cannot substitute for standards validation.
+## What a PASS means
+
+`ValidationReport.compliant == True` means the document passed every rule implemented by the owned validator for the requested level. The report identifies its engine as `pdf2pdfa-owned`.
+
+This is not a claim that a third party has certified the file or the software. The project does not invoke an external conformance oracle at runtime.
+
+Because the validator is ours, validator correctness is treated as product code: rules are explicit, testable and fail-closed. New edge cases belong in the rule engine and regression corpus, not in a fallback to another validator.
 
 ## Supported targets
 
-| Target | Transparency | Embedded arbitrary files | JavaScript | Encryption |
-|---|---:|---:|---:|---:|
-| PDF/A-1b | no | no | no | no |
-| PDF/A-2b | yes | no | no | no |
-| PDF/A-3b | yes | yes | no | no |
+| Target | Output version | Transparency | Attachments | JavaScript | Encryption |
+|---|---|---|---|---|---|
+| PDF/A-1b | PDF 1.4 | forbidden; supported cases are flattened | forbidden | forbidden | forbidden |
+| PDF/A-2b | PDF 1.7 | permitted subject to PDF/A rules | restricted by owned 2b attachment policy | forbidden | forbidden |
+| PDF/A-3b | PDF 1.7 | permitted subject to PDF/A rules | associated/embedded files permitted subject to PDF/A-3 structure | forbidden | forbidden |
 
-The table describes the policy enforced by the current converter. A feature being permitted by a profile does not by itself prove that every representation of that feature is conformant; veraPDF remains the standards oracle when validation is requested.
+The table describes the conversion/validation policy implemented by this project. The detailed decision is always the structured rule report, not the table.
 
-## Verified versus unverified output
+## Mandatory post-write validation
 
-### Verified
+Every rewrite is handled as:
 
-Created with `validate=True` or CLI `--validate` and accepted by veraPDF for the exact requested flavour.
+1. parse source;
+2. inspect/plan repair;
+3. perform only owned repairs;
+4. write a temporary candidate;
+5. **reparse the candidate from bytes**;
+6. run the owned validator for the requested level;
+7. run the required fidelity gate;
+8. publish atomically.
 
-Properties:
+There is no public `validate=False` or `--no-validate` conversion path. A candidate rejected by the owned validator is never moved to the destination.
 
-- the candidate was validated before publication;
-- validation failure leaves an existing destination untouched;
-- an already-valid source can be copied unchanged instead of rewritten;
-- automatic mode may retry with the full-rewrite backend if the fast-path candidate fails validation.
+An already-conforming unencrypted input is also validated first. If it passes, it can be preserved byte-for-byte.
 
-### Unverified
+## Rule report
 
-Created without veraPDF validation. This mode exists for environments where veraPDF is unavailable or where callers deliberately separate conversion and validation.
+A validation failure records:
 
-An unverified output is a **PDF/A candidate**, not a library guarantee of standards compliance. The CLI labels it `UNVERIFIED` for this reason.
+- `rule_id` — stable project rule identifier;
+- `clause` — standards/topic clause label used by the implementation;
+- `message` — exact reason;
+- `path` — PDF page/object/resource path when available.
 
-## Fidelity modes
+This makes a failed conversion actionable and allows each discovered edge case to become a regression test.
 
-Visual fidelity answers a different question from PDF/A validation: whether the rendered result materially changed relative to the source.
+## File-structure rules
 
-- `fidelity="off"` — no raster comparison;
-- `fidelity="warn"` — compare pages and return the report, but do not block publication;
-- `fidelity="strict"` — page-count, page-size or rendered-difference failures block atomic publication.
+The validator covers profile-relevant structure including:
 
-The checker renders source and candidate through the same Ghostscript raster pipeline and compares the resulting images using bounded pixel tolerances. This detects many visible regressions, but it does not prove semantic equivalence of text, links, annotations or embedded files.
+- PDF version constraints;
+- encryption and crypt filters;
+- prohibited external stream data;
+- stream/filter restrictions;
+- PDF/A-1 object/xref stream restrictions;
+- reachable object graph integrity;
+- catalog/page-tree requirements;
+- mandatory document XMP.
 
-## Font policy
+The writer normalizes profile-sensitive structure before validation, including classic xref output for PDF/A-1.
 
-The object-level backend embeds missing fonts only when the original mapping can be preserved conservatively.
+## Metadata/XMP
 
-It refuses to rewrite the following as generic WinAnsi TrueType fonts:
+The owned XMP layer creates and validates the PDF/A identification fields and core metadata synchronization required by the implementation.
 
-- Type0/CID fonts;
-- custom encodings;
-- Symbol and ZapfDingbats substitutions;
-- unsupported font subtypes;
-- arbitrary unknown font families unless the caller explicitly provides a simple-font override.
+The validator checks that document metadata is an XML metadata stream, parses it with the standard-library XML parser, checks the requested `pdfaid:part`/`pdfaid:conformance`, and rejects malformed/unsupported extension-schema use rather than accepting arbitrary custom metadata blindly.
 
-These cases are routed to a full rewrite in automatic mode or fail when the pikepdf backend is forced.
+## Fonts and CMaps
 
-## Color policy
+PDF/A requires the resources needed for reproducible rendering to be contained in the file.
 
-OutputIntent and resource color profiles have separate roles.
+The validator checks used font resources and embedding. The repair engine embeds a font only when an explicitly supplied font program can be matched and mapped without guessing character codes/glyphs.
 
-- custom OutputIntent ICC profiles are validated structurally;
-- RGB replacement profiles must declare three components;
-- CMYK replacement profiles must declare four components;
-- the library does not describe a custom CMYK profile as sRGB;
-- resource normalization is intentionally conservative and does not pretend to be a full color-management engine.
+The owned renderer currently has production-reachable support for:
 
-Difficult color transformations belong to the full-rewrite backend and still require validation.
+- TrueType and CIDFontType2 outlines;
+- CFF1 / Type2 CharStrings and CIDFontType0C, including per-FD FontMatrix;
+- embedded Type1 PFA/PFB, StandardEncoding/Differences, `seac` and standard Flex OtherSubrs;
+- Type3 CharProcs;
+- Type0 horizontal and vertical text state with DW2/W2 metrics;
+- algorithmic `Identity-H` / `Identity-V` CMaps;
+- compiled Adobe-Japan1 `90ms-RKSJ-H` / `90ms-RKSJ-V` predefined mappings.
 
-## PDF/A-1
+Additional predefined Adobe CMap families remain fail-closed when their mapping data is required. No system font or system CMap fallback is used.
 
-PDF/A-1 has the strictest feature constraints among the supported targets. Automatic mode routes transparency and similar features to the full rewrite path rather than attempting to relabel a PDF 1.5+ object graph as PDF/A-1.
+## Color and OutputIntent
 
-The pikepdf fast path saves PDF/A-1 candidates at PDF 1.4 compatibility and disables object streams.
+The engine owns ICC parsing/generation and color transformations used by conversion and rendering.
 
-## PDF/A-2
+Validation includes:
 
-PDF/A-2 permits features such as transparency that PDF/A-1 does not. Embedded arbitrary files are still treated as a profile blocker.
+- OutputIntent structure;
+- embedded ICC header/tag integrity;
+- component/color-space consistency;
+- profile-specific use of device color where an appropriate characterization is required;
+- color resources encountered in used painting paths.
 
-## PDF/A-3
+Default archival profiles are generated by source code rather than copied binary profile assets.
 
-PDF/A-3 permits embedded files. The converter therefore does not automatically classify their mere presence as an error for a `3b` target.
+## Actions and interactive features
 
-Preserving attachment semantics through a full rewrite can be backend-dependent. For workflows where attachments are business-critical, use validation and independently test that the expected attachments remain present.
+The validator/repair planner traverses document, page and annotation actions. Forbidden JavaScript and action types are removed only when doing so is a semantics-safe archival repair; otherwise a blocker is returned.
 
-## Existing PDF/A files
+Dynamic annotation/media features that require visual flattening are not silently dropped.
 
-When validation is enabled and the source claims the requested profile, `pdf2pdfa` validates the source first. If veraPDF confirms compliance, the source is copied byte-for-byte instead of being needlessly transformed.
+## PDF/A-1 transparency
 
-Without validation, an existing XMP claim is not trusted enough to trigger passthrough.
+PDF/A-1 conversion has an owned rendering path rather than an external full-rewrite backend.
+
+The validator records *used* transparency locations. The repair planner maps page-content transparency to page numbers. Supported pages are rendered through the owned transparency compositor, flattened to opaque RGB, embedded as an image, then revalidated.
+
+The production renderer supports opacity, blend modes, soft masks, isolated transparency groups, RGB non-isolated transparency groups and a bounded knockout path that preserves shape separately from opacity for supported graphical-object classes. Shading types 1-7 and PatternType 1/2 are production-reachable through the same owned renderer.
+
+Advanced knockout interactions and explicit non-RGB transparency-group blending spaces remain fail-closed where exact PDF object semantics are not yet implemented.
+
+Normal annotation appearances are rendered and can participate in PDF/A-1 static appearance repair. Display behavior that depends on `NoZoom`, `NoRotate` or `ToggleNoView` remains fail-closed when it affects required visual reproduction.
+
+## Image codecs
+
+A compressed image can often be preserved without pixel decoding when the target profile allows its encoding and no visual rewrite is necessary.
+
+Rendering/flattening requires a decoder. The owned stack currently decodes generic packed/filter streams, baseline JPEG and CCITT Group 3/4/mixed fax. JPX/JPEG 2000 and JBIG2 remain explicit unsupported rendering cases. The engine does not shell out to an image utility or import an image package.
+
+## Embedded files
+
+Attachment policy is profile-specific. PDF/A-1 removes/rejects embedded files. PDF/A-2 applies the narrower attachment forms supported by the owned rule set. PDF/A-3 supports associated files subject to filespec/relationship rules.
+
+Attachment removal is never implicit when it could discard business data: callers must opt into attachment removal where the repair policy requires it.
 
 ## Digital signatures
 
-A structurally applied digital signature is treated separately from an empty signature form field.
+A PDF signature protects byte ranges. Rewriting the document changes those bytes even if the visible appearance is identical.
 
-Any conversion that rewrites bytes can invalidate a signature. Signed PDFs are rejected by default. The caller must explicitly opt into signature invalidation before conversion is attempted.
+Applied signatures are detected and conversion is refused by default. Empty signature form fields are not treated as applied signatures. Invalidation requires explicit caller opt-in.
 
-## Test strategy
+## Security/encryption
 
-Compliance-related testing is intentionally split into four layers:
+PDF/A output is never encrypted. Supported Standard Security Handler input is authenticated/decrypted by owned code before repair. Passwords remain in-process and the encryption dictionary is removed before writing the archival candidate.
 
-1. **unit and structural tests** for policies, parsing and object-graph decisions;
-2. **generated adversarial fixtures** for transparency, JavaScript, attachments, signatures, Type0/CID fonts and device color spaces;
-3. **veraPDF integration validation** as the standards conformance gate;
-4. **visual fidelity comparison** as an independent preservation oracle.
+## Fidelity is a separate gate
 
-The repository intentionally does not run these on push or pull request. Before release, `python scripts/check.py --full` runs the complete manual gate. A passing unit test suite without veraPDF integration is not treated as proof of PDF/A compliance.
+Conformance does not prove preservation.
+
+### Semantic fidelity
+
+Used for structural changes where painting should remain unchanged. It compares page geometry/rotation, decoded content, text-show sequences, images and attachment inventory according to the permitted repair.
+
+### Visual fidelity
+
+Used when the repair intentionally changes painting, such as PDF/A-1 raster flattening. Source and candidate are rendered by the same owned engine and compared in memory at controlled DPI/tolerances.
+
+### Auto mode
+
+`fidelity="auto"` selects semantic comparison for structural repair and visual comparison for painting rewrite. Validation remains mandatory in every mode.
+
+## Fail-closed rule
+
+If any of the following is true, publication fails:
+
+- the parser cannot safely classify a structure relevant to conformance;
+- a validation rule fails and has no proven repair;
+- a required decoder/renderer primitive is not implemented;
+- an owned repair produces a candidate that fails post-write validation;
+- the selected fidelity gate fails;
+- signature invalidation was not explicitly allowed.
+
+A clear unsupported result is considered better than a plausible-looking archival file whose conformance or appearance cannot be justified by our code.
+
+## Release confidence
+
+The release gate combines:
+
+1. unit tests for parser/writer/filter/security/font/color/rendering primitives;
+2. generated adversarial PDF fixtures;
+3. PDF/A rule and repair tests for 1b/2b/3b;
+4. ownership/import-graph tests;
+5. public API/CLI tests;
+6. owned end-to-end conversion → reparse → validation → fidelity smoke tests;
+7. package build and metadata validation.
+
+The repository intentionally has no push/pull-request CI workflow. Before tagging, the full gate is run manually with `python scripts/check.py --full`; the tag-triggered publication workflow repeats that same full owned gate and publishes to PyPI only if it passes.

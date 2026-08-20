@@ -1,0 +1,56 @@
+"""Renderer mixin for the canonical owned PDF shading dispatcher."""
+
+from __future__ import annotations
+
+from .content import ContentInstruction
+from .objects import PDFDict, PDFStream
+from .page_render import RenderingError, UnsupportedRenderingError, _name, _resolve_resource
+from .shading import ShadingError, UnsupportedShadingError
+from .shading_dispatch import paint_owned_shading
+from .structure import resolve
+
+
+class ShadingRendererMixin:
+    """Intercept ``sh`` and paint through the canonical owned shading engine.
+
+    The mixin is intentionally orthogonal to transparency. When combined with
+    ``TransparencyRenderer`` it consumes that renderer's current ``soft_mask``
+    and ordinary graphics-state alpha/blend mode, so every supported shading
+    type participates in the same owned compositing semantics as paths, text
+    and images.
+    """
+
+    def _instruction(self, instruction: ContentInstruction) -> None:
+        if instruction.operator != "sh":
+            return super()._instruction(instruction)  # type: ignore[misc]
+
+        args = list(instruction.operands)
+        if len(args) != 1:
+            raise RenderingError("sh expects exactly one shading resource name")
+        name = _name(args[0], "sh")
+        shading = _resolve_resource(self.doc, self.resources, "Shading", name)  # type: ignore[attr-defined]
+        resolved = resolve(self.doc, shading)  # type: ignore[attr-defined]
+        dictionary = resolved.dictionary if isinstance(resolved, PDFStream) else resolved
+        if not isinstance(dictionary, PDFDict):
+            raise RenderingError("Shading resource is not a dictionary/stream")
+        raw_type = resolve(self.doc, dictionary.get("ShadingType"))  # type: ignore[attr-defined]
+        if isinstance(raw_type, bool) or not isinstance(raw_type, int):
+            raise RenderingError("ShadingType shall be an integer")
+
+        surface, state, _ = self._require()  # type: ignore[attr-defined]
+        soft_mask = getattr(self, "soft_mask", None)
+        try:
+            paint_owned_shading(
+                self.doc,  # type: ignore[attr-defined]
+                shading,
+                resources=self.resources,  # type: ignore[attr-defined]
+                surface=surface,
+                ctm=state.ctm,
+                fill_alpha=state.fill_alpha,
+                blend_mode=state.blend_mode,
+                soft_mask=soft_mask,
+            )
+        except UnsupportedShadingError as exc:
+            raise UnsupportedRenderingError(str(exc)) from exc
+        except ShadingError as exc:
+            raise RenderingError(str(exc)) from exc

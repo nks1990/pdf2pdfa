@@ -1,0 +1,57 @@
+# Owned renderer support matrix
+
+This file describes the capabilities that are actually reachable through
+`FullOwnedPageRenderer`, which is the renderer used by visual fidelity and
+PDF/A-1 transparency flattening. A component module is not considered shipped
+renderer support until it is composed into that canonical class and covered by
+an end-to-end regression.
+
+## Reachable today
+
+- vector fills, clipping and affine strokes;
+- TrueType/CIDFontType2 text and Type3 graphical CharProcs within the documented limits;
+- embedded Type1 PFA/PFB `/FontFile` programs rendered directly from owned eexec/CharString outlines, including PFA/PFB, local Subrs, PDF-authoritative Widths, explicit PDF encodings, built-in StandardEncoding/custom 256-array encoding fallback and Differences semantics;
+- Type1 StandardEncoding `seac` composites resolved from the original base/accent CharStrings with owned sidebearing/offset composition; nested/missing/undefined components fail closed;
+- standard Type1 OtherSubrs Flex 1/2/0, hint-replacement OtherSubr 3 and counter-control hint OtherSubrs 12/13, including seven-vector/two-cubic Flex geometry and `pop pop setcurrentpoint` result protocol;
+- Type1 fill/stroke/clip render modes through the same owned text-state machine used by TrueType/CFF, including Type1 inside transparency groups and annotation appearances;
+- embedded CFF1 `/Type1C` simple fonts using owned WinAnsi/Differences mapping;
+- embedded CID-keyed `/CIDFontType0C` and CIDFontType2 through the shared owned Type0 CMap resolver;
+- CFF CID per-FD FontMatrix selection/composition through FDSelect, including top-linear × FD matrix and reference-compatible FD offset transformation;
+- Identity-H/V and embedded CMaps with local codespace/cidchar/cidrange mappings;
+- embedded CMap inheritance through stream `/UseCMap` or content `/Name usecmap`, including child-over-base mapping precedence, inherited codespaces/WMode and cycle/depth guards;
+- Type0 writing mode 1 for CIDFontType2 and CIDFontType0C, including shared DW2/W2 parsing, compact range metrics, vertical origin placement, Y displacement and vertical TJ corrections;
+- CFF text fill/stroke/clip render modes through the same owned text-state machine;
+- raw/general-filtered images, baseline JPEG and CCITT Group 3/4/MR fax images;
+- image masks and soft masks;
+- device/calibrated/ICC/Indexed/Separation/DeviceN color paths already supported by the color engine;
+- blend modes and isolated transparency groups in the owned RGB compositor;
+- non-isolated transparency groups with implicit/DeviceRGB blending space, including translucent backdrops and boundary alpha/blend/soft-mask composition;
+- function-based ShadingType 1 surfaces with two-input owned PDF Functions;
+- axial/radial ShadingType 2/3;
+- Gouraud mesh ShadingType 4/5, including filtered mesh streams;
+- PatternType 2 shading fills and strokes routed through the same canonical shading dispatcher;
+- PatternType 1 / PaintType 1 colored tiling fills and strokes;
+- PatternType 1 / PaintType 2 uncolored tiling fills and strokes through an owned shape-mask renderer, with base color supplied by `[/Pattern base] ... scn/SCN`;
+- pattern strokes use the canonical affine stroke geometry for dash/cap/join/miter/hairline/non-uniform CTM, independent `CA` alpha, q/Q state, compound fill+stroke and same-path W/W* clipping;
+- normal annotation `/AP /N` rendering with BBox/Matrix-to-Rect mapping, state selection and page rotation;
+- annotation-aware visual fidelity;
+- PDF/A-1 annotation appearance transparency repair by baking the current normal appearance into the static page raster and neutralizing AP painting streams while retaining annotation dictionary/Rect/Subtype/AS semantics;
+- owned PDF/A-1 page transparency flattening and visual fidelity.
+
+## Explicit fail-closed renderer gaps
+
+- ShadingType 6/7 Coons/tensor patch meshes;
+- PaintType 2 cell soft masks/transparency groups and intrinsic-color content;
+- proprietary/Multiple-Master Type1 OtherSubrs that require PostScript/MM semantics beyond the standard Flex/hint set;
+- Type1 built-in encodings that require a general PostScript VM and non-ASCII MacRoman entries not yet in the owned table;
+- predefined non-Identity Adobe CMaps (Japan1/GB1/CNS1/Korea1 families) until their mapping data is added as owned repository resources;
+- JPX/JPEG 2000 and JBIG2 image codecs;
+- knockout transparency groups;
+- transparency groups with an explicit non-RGB blending color space;
+- annotation NoZoom/NoRotate/ToggleNoView display transforms;
+- dynamic annotation appearance interaction after PDF/A-1 static appearance baking (R/D streams are neutralized);
+- Type3 stroke/clip text render modes and nested text where not already supported.
+
+The production rule is fail-closed: a conversion that requires one of these
+paths must not silently substitute another font, codec, rasterizer or external
+engine.
