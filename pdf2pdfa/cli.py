@@ -55,12 +55,23 @@ def _validation_dict(report: ValidationReport) -> dict[str, object]:
 
 
 def _inspection_dict(report: InspectionResult) -> dict[str, object]:
+    fonts = None
+    if report.fonts is not None:
+        fonts = {
+            "embedded": report.fonts.embedded,
+            "already_embedded": report.fonts.already_embedded,
+            "type3": report.fonts.type3,
+            "missing": list(report.fonts.missing),
+            "unsupported": list(report.fonts.unsupported),
+            "complete": report.fonts.complete,
+        }
     return {
         "level": report.level,
         "encrypted": report.encrypted,
         "compliant": report.compliant,
         "repairable": report.repairable,
         "validation": _validation_dict(report.validation),
+        "fonts": fonts,
         "plan": {
             "operations": list(report.plan.operations),
             "warnings": list(report.plan.warnings),
@@ -123,10 +134,12 @@ def _parser() -> argparse.ArgumentParser:
     batch.add_argument("--json", action="store_true", dest="json_output")
     _add_common_conversion_options(batch)
 
-    inspect = sub.add_parser("inspect", aliases=["preflight"], help="show owned conformance and conversion repair plan")
+    inspect = sub.add_parser("inspect", aliases=["preflight"], help="dry-run owned conversion preparation and show its repair plan")
     inspect.add_argument("input")
     inspect.add_argument("--level", choices=LEVELS, default="2b")
     inspect.add_argument("--password-file")
+    inspect.add_argument("--font", action="append", default=[], help="Owned TTF font program; repeatable")
+    inspect.add_argument("--font-dir", action="append", default=[], help="Directory of owned-readable TTF fonts; repeatable")
     inspect.add_argument("--max-input-mib", type=int)
     inspect.add_argument("--transparency-dpi", type=int, default=144)
     inspect.add_argument("--allow-signature-invalidation", action="store_true")
@@ -218,13 +231,24 @@ def _inspect(args: argparse.Namespace) -> int:
         allow_attachment_removal=args.allow_attachment_removal,
         transparency_dpi=args.transparency_dpi,
     )
-    result = converter.inspect(args.input, password=_password(args.password_file))
+    result = converter.inspect(
+        args.input,
+        password=_password(args.password_file),
+        font_paths=args.font,
+        font_directories=args.font_dir,
+    )
     payload = _inspection_dict(result)
     if args.json_output:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         state = "COMPLIANT" if result.compliant else "NEEDS-REPAIR"
         print(f"PDF/A-{result.level}: {state}; repairable={result.repairable}; encrypted={result.encrypted}")
+        if result.fonts is not None:
+            print(
+                "  FONTS "
+                f"embedded={result.fonts.embedded} already={result.fonts.already_embedded} "
+                f"missing={len(result.fonts.missing)} unsupported={len(result.fonts.unsupported)}"
+            )
         for operation in result.plan.operations:
             print(f"  PLAN  {operation}")
         for blocker in result.plan.blockers:
