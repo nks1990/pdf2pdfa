@@ -1,6 +1,6 @@
 # Testing
 
-The v5 test strategy proves three separate things: the owned PDF engine behaves correctly, the owned PDF/A rule engine rejects/accepts the intended structures, and conversion preserves document semantics or appearance according to the repair performed.
+The v5 test strategy proves four separate things: the owned PDF engine behaves correctly, the owned PDF/A rule engine rejects/accepts the intended structures, conversion preserves document semantics or appearance according to the repair performed, and the **built distribution** contains the same working product that was tested from source.
 
 The repository intentionally has no push/pull-request CI workflow. Quality gates are run manually during development. The tag-triggered publication workflow repeats the complete owned release gate before PyPI publication.
 
@@ -11,7 +11,7 @@ python -m pip install -e ".[dev]"
 python scripts/check.py
 ```
 
-This runs the release-layout/ownership sanity check and the complete canonical pytest suite under `tests/native` and `tests/owned`.
+This runs the release-layout/ownership sanity check, compiles package/release scripts and runs the complete canonical pytest suite under `tests/native` and `tests/owned`.
 
 ## Package gate
 
@@ -19,7 +19,17 @@ This runs the release-layout/ownership sanity check and the complete canonical p
 python scripts/check.py --package
 ```
 
-This also rebuilds wheel/sdist from scratch and runs `twine check`. Package metadata is expected to declare zero runtime dependencies.
+This rebuilds wheel/sdist from scratch, runs `twine check`, inspects the wheel metadata and installs the wheel with `--no-deps` into a fresh temporary virtual environment. The isolated wheel smoke then verifies:
+
+- package name/version metadata;
+- no unconditional runtime `Requires-Dist` entries;
+- `LICENSE` and `THIRD_PARTY_NOTICES.md` are shipped as license files;
+- `pdf2pdfa/py.typed` is present;
+- every installed `pdf2pdfa` module imports successfully;
+- `python -m pdf2pdfa --version` works from the installed wheel;
+- the owned PDF/A-1b/2b/3b end-to-end smoke succeeds using the installed wheel rather than the checkout.
+
+This is intentionally stricter than `twine check`: a distribution can have valid metadata while still omitting a runtime module or required notice.
 
 ## Full owned gate
 
@@ -27,9 +37,9 @@ This also rebuilds wheel/sdist from scratch and runs `twine check`. Package meta
 python scripts/check.py --full
 ```
 
-The full gate adds package validation and an end-to-end smoke run for PDF/A-1b, 2b and 3b using only repository-owned runtime code. The 1b case deliberately includes transparency so the owned renderer/flattening/visual-fidelity path is exercised rather than only metadata normalization.
+The full gate includes the complete package gate above and also runs the owned end-to-end smoke directly against the exact checkout used to build the release. The 1b case deliberately includes transparency so the owned renderer/flattening/visual-fidelity path is exercised rather than only metadata normalization.
 
-No external PDF converter, validator or rasterizer is required by the full gate.
+No external PDF converter, validator or rasterizer is required by the canonical full gate.
 
 ## 1. Parser and writer tests
 
@@ -61,7 +71,8 @@ Security tests must also verify:
 
 - passwords never appear in logs/errors intended for users;
 - applied signatures are distinguished from empty signature fields;
-- signed input is refused unless invalidation was explicitly allowed;
+- signed input is refused when a rewrite is required unless invalidation was explicitly allowed;
+- `inspect` reports the same applied-signature rewrite blocker as `convert` under the same policy;
 - a failed password or security operation never overwrites an existing destination.
 
 ## 4. PDF/A rule-engine tests
@@ -138,13 +149,17 @@ Do not weaken tolerances merely to make a regression pass. If a tolerance change
 
 `tests/native/test_native_module_graph.py` separately verifies that relative imports inside the native engine point to real repository modules. This prevents a branch integration from producing a package that refers to a missing internal component.
 
+The isolated wheel smoke repeats the installed-module import graph check after packaging so a source-tree success cannot hide an incomplete wheel.
+
 ## 9. Public API and CLI tests
 
 Test through `from pdf2pdfa import Converter`, not only internal classes. Public tests cover:
 
-- `inspect` repair-plan output;
+- `inspect` repair-plan/blocker output;
+- applied-signature policy parity between inspection and conversion;
 - `validate` structured owned reports;
 - successful conversion and mandatory validation;
+- `--version` metadata exposure;
 - JSON CLI output;
 - batch exit behavior;
 - removed backend/validator options remaining unavailable;
@@ -167,11 +182,15 @@ A release-quality real-world corpus should include, when redistribution or local
 - mixed RGB/CMYK/ICC documents;
 - malformed-but-openable producer output.
 
+Use `scripts/corpus_check.py` to collect machine-readable conversion/blocker/error statistics rather than testing files manually one by one.
+
 A real-world fixture must not become an opaque oracle: its expected rule/repair behavior should be documented in the test or qualification notes.
 
 ## Independent oracle qualification
 
 The production package intentionally does not depend on third-party PDF engines or validators. Release qualification may still compare representative outputs against independent tools such as veraPDF, qpdf, MuPDF or Ghostscript.
+
+`scripts/external_oracle_check.py` provides a release-only harness for owned-validator/veraPDF agreement plus qpdf structural checks and Ghostscript parsing/rendering smoke when those tools are installed.
 
 These tools are **qualification oracles**, not runtime dependencies. A disagreement must be investigated rather than automatically treating either side as authoritative. This reduces the risk that the owned converter and owned validator share the same interpretation bug.
 
@@ -197,15 +216,16 @@ A release candidate should satisfy all of the following:
 
 1. `python scripts/check.py --full` passes on the exact release candidate commit;
 2. wheel/sdist build and pass `twine check`;
-3. `python scripts/release_check.py` passes;
-4. `pyproject.toml` declares zero runtime dependencies;
-5. ownership and module-graph tests pass;
-6. no known unsupported rendering/codec path is mislabeled as supported;
-7. README/compliance/renderer-support limitations match current engine coverage;
-8. no known regression is hidden by an unjustified skip;
-9. `.github/workflows/` contains only the tag-triggered release workflow;
-10. `THIRD_PARTY_NOTICES.md` is present and included by package license metadata;
-11. representative real-world PDFs have been exercised where available;
-12. independent-oracle disagreements, if any, are understood and documented;
-13. the release tag equals `v<project.version>`;
-14. the tag-triggered workflow repeats `python scripts/check.py --full` before PyPI publication.
+3. the built wheel passes isolated metadata/license/module-import/CLI/E2E smoke;
+4. `python scripts/release_check.py` passes;
+5. `pyproject.toml` declares zero runtime dependencies and the wheel contains no unconditional runtime `Requires-Dist`;
+6. ownership and module-graph tests pass both in source and for installed wheel modules;
+7. no known unsupported rendering/codec path is mislabeled as supported;
+8. README/compliance/renderer-support limitations match current engine coverage;
+9. no known regression is hidden by an unjustified skip;
+10. `.github/workflows/` contains only the tag-triggered release workflow;
+11. `THIRD_PARTY_NOTICES.md` is present in source distribution metadata and in the built wheel license directory;
+12. representative real-world PDFs have been exercised where available;
+13. independent-oracle disagreements, if any, are understood and documented;
+14. the release tag equals `v<project.version>`;
+15. the tag-triggered workflow repeats `python scripts/check.py --full` before PyPI publication.
