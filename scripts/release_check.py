@@ -38,6 +38,11 @@ def main() -> int:
     if 'license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]' not in text:
         fail("license-files must include LICENSE and THIRD_PARTY_NOTICES.md")
 
+    manifest_path = ROOT / "MANIFEST.in"
+    manifest = manifest_path.read_text(encoding="utf-8") if manifest_path.exists() else ""
+    if "include THIRD_PARTY_NOTICES.md" not in manifest.splitlines():
+        fail("MANIFEST.in must include THIRD_PARTY_NOTICES.md")
+
     expected = [
         ROOT / "README.md",
         ROOT / "LICENSE",
@@ -45,6 +50,7 @@ def main() -> int:
         ROOT / "CHANGELOG.md",
         ROOT / "SECURITY.md",
         ROOT / "CONTRIBUTING.md",
+        ROOT / "MANIFEST.in",
         ROOT / "docs" / "ARCHITECTURE.md",
         ROOT / "docs" / "COMPLIANCE.md",
         ROOT / "docs" / "RENDERER_SUPPORT.md",
