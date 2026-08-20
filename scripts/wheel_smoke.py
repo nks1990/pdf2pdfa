@@ -9,11 +9,13 @@ so imports resolve from the installed wheel rather than the repository package.
 from __future__ import annotations
 
 import argparse
+from email.parser import Parser
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import venv
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,6 +32,47 @@ def _venv_python(root: Path) -> Path:
     return root / "bin" / "python"
 
 
+def _inspect_wheel(wheel: Path) -> None:
+    with zipfile.ZipFile(wheel) as archive:
+        names = archive.namelist()
+        metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
+        if len(metadata_names) != 1:
+            raise SystemExit(
+                f"wheel-smoke: expected one METADATA file, found {len(metadata_names)}"
+            )
+        metadata = Parser().parsestr(
+            archive.read(metadata_names[0]).decode("utf-8", errors="strict")
+        )
+        if metadata.get("Name", "").lower() != "pdf2pdfa":
+            raise SystemExit(f"wheel-smoke: unexpected package name {metadata.get('Name')!r}")
+        version = metadata.get("Version", "").strip()
+        if not version or version.startswith("0+"):
+            raise SystemExit(f"wheel-smoke: invalid wheel version {version!r}")
+
+        requirements = metadata.get_all("Requires-Dist", []) or []
+        unconditional = [item for item in requirements if "extra ==" not in item]
+        if unconditional:
+            raise SystemExit(
+                "wheel-smoke: unexpected runtime Requires-Dist: "
+                + "; ".join(unconditional)
+            )
+
+        license_basenames = {
+            Path(name).name
+            for name in names
+            if ".dist-info/licenses/" in name.replace("\\", "/")
+        }
+        required_licenses = {"LICENSE", "THIRD_PARTY_NOTICES.md"}
+        missing = sorted(required_licenses - license_basenames)
+        if missing:
+            raise SystemExit(
+                "wheel-smoke: missing wheel license/notices: " + ", ".join(missing)
+            )
+
+        if "pdf2pdfa/py.typed" not in names:
+            raise SystemExit("wheel-smoke: pdf2pdfa/py.typed is missing from wheel")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("wheel", type=Path, help="built pdf2pdfa wheel")
@@ -38,6 +81,8 @@ def main() -> int:
     wheel = args.wheel.expanduser().resolve()
     if not wheel.is_file() or wheel.suffix != ".whl":
         raise SystemExit(f"wheel-smoke: wheel not found: {wheel}")
+
+    _inspect_wheel(wheel)
 
     with tempfile.TemporaryDirectory(prefix="pdf2pdfa-wheel-") as tempdir_name:
         environment = Path(tempdir_name) / "venv"
@@ -57,6 +102,15 @@ def main() -> int:
             str(wheel),
         )
         _run(str(python), "-m", "pdf2pdfa", "--version")
+
+        import_scan = (
+            "import importlib, pkgutil, pdf2pdfa; "
+            "mods=[pdf2pdfa.__name__]+[m.name for m in pkgutil.walk_packages("
+            "pdf2pdfa.__path__, pdf2pdfa.__name__+'.')]; "
+            "[importlib.import_module(name) for name in sorted(set(mods))]; "
+            "print('installed-module-scan:', len(set(mods)), 'modules OK')"
+        )
+        _run(str(python), "-c", import_scan, cwd=ROOT / "scripts")
 
         # Run from the scripts directory so the repository root is not placed
         # on sys.path ahead of site-packages. This exercises the installed
