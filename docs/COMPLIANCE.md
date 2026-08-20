@@ -69,13 +69,23 @@ The owned XMP layer creates and validates the PDF/A identification fields and co
 
 The validator checks that document metadata is an XML metadata stream, parses it with the standard-library XML parser, checks the requested `pdfaid:part`/`pdfaid:conformance`, and rejects malformed/unsupported extension-schema use rather than accepting arbitrary custom metadata blindly.
 
-## Fonts
+## Fonts and CMaps
 
 PDF/A requires the resources needed for reproducible rendering to be contained in the file.
 
 The validator checks used font resources and embedding. The repair engine embeds a font only when an explicitly supplied font program can be matched and mapped without guessing character codes/glyphs.
 
-The owned font stack currently has direct parsing/rendering for supported TrueType/SFNT and CIDFontType2 paths. Unsupported CFF/Type1/Type3/predefined-CMap rendering paths are explicit blockers when rendering is required; they are never replaced by a generic system font.
+The owned renderer currently has production-reachable support for:
+
+- TrueType and CIDFontType2 outlines;
+- CFF1 / Type2 CharStrings and CIDFontType0C, including per-FD FontMatrix;
+- embedded Type1 PFA/PFB, StandardEncoding/Differences, `seac` and standard Flex OtherSubrs;
+- Type3 CharProcs;
+- Type0 horizontal and vertical text state with DW2/W2 metrics;
+- algorithmic `Identity-H` / `Identity-V` CMaps;
+- compiled Adobe-Japan1 `90ms-RKSJ-H` / `90ms-RKSJ-V` predefined mappings.
+
+Additional predefined Adobe CMap families remain fail-closed when their mapping data is required. No system font or system CMap fallback is used.
 
 ## Color and OutputIntent
 
@@ -103,15 +113,17 @@ PDF/A-1 conversion has an owned rendering path rather than an external full-rewr
 
 The validator records *used* transparency locations. The repair planner maps page-content transparency to page numbers. Supported pages are rendered through the owned transparency compositor, flattened to opaque RGB, embedded as an image, then revalidated.
 
-The current renderer supports opacity, common blend modes, soft masks and isolated transparency groups. Non-isolated or knockout groups remain fail-closed until their backdrop/group semantics are fully implemented.
+The production renderer supports opacity, blend modes, soft masks, isolated transparency groups, RGB non-isolated transparency groups and a bounded knockout path that preserves shape separately from opacity for supported graphical-object classes. Shading types 1-7 and PatternType 1/2 are production-reachable through the same owned renderer.
 
-Annotation appearance transparency is also fail-closed when the appearance cannot be composed without changing annotation semantics/resources.
+Advanced knockout interactions and explicit non-RGB transparency-group blending spaces remain fail-closed where exact PDF object semantics are not yet implemented.
+
+Normal annotation appearances are rendered and can participate in PDF/A-1 static appearance repair. Display behavior that depends on `NoZoom`, `NoRotate` or `ToggleNoView` remains fail-closed when it affects required visual reproduction.
 
 ## Image codecs
 
 A compressed image can often be preserved without pixel decoding when the target profile allows its encoding and no visual rewrite is necessary.
 
-Rendering/flattening requires a decoder. The owned stack currently decodes generic packed/filter streams and baseline JPEG. JPX/JBIG2/CCITT rendering paths remain explicit unsupported cases until owned decoders are present. The engine does not shell out to an image utility or import an image package.
+Rendering/flattening requires a decoder. The owned stack currently decodes generic packed/filter streams, baseline JPEG and CCITT Group 3/4/mixed fax. JPX/JPEG 2000 and JBIG2 remain explicit unsupported rendering cases. The engine does not shell out to an image utility or import an image package.
 
 ## Embedded files
 
@@ -167,6 +179,7 @@ The release gate combines:
 3. PDF/A rule and repair tests for 1b/2b/3b;
 4. ownership/import-graph tests;
 5. public API/CLI tests;
-6. owned end-to-end conversion → reparse → validation → fidelity smoke tests.
+6. owned end-to-end conversion → reparse → validation → fidelity smoke tests;
+7. package build and metadata validation.
 
-The repository intentionally runs these manually rather than on push/pull-request GitHub Actions.
+The repository intentionally has no push/pull-request CI workflow. Before tagging, the full gate is run manually with `python scripts/check.py --full`; the tag-triggered publication workflow repeats that same full owned gate and publishes to PyPI only if it passes.
