@@ -1,0 +1,33 @@
+name: Ephemeral v5 RC qualification
+
+on:
+  push:
+    branches:
+      - qualification/v5.0.0-rc1
+
+permissions:
+  contents: read
+
+jobs:
+  qualify:
+    name: full gate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout exact RC commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 3807aa1f3bf608d2ea197536fe7781ef537b72ea
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install development dependencies
+        run: python -m pip install --disable-pip-version-check -e ".[dev]"
+      - name: Run exact RC full release gate
+        run: python scripts/check.py --full
