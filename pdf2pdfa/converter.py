@@ -12,6 +12,7 @@ from .native.pipeline import (
     FidelityMode,
     OwnedConversionResult,
     OwnedPDFAPipeline,
+    _has_applied_signature,
 )
 from .native.repair import RepairPlan
 from .native.repair_owned import OwnedRepairEngine
@@ -99,6 +100,7 @@ class Converter:
     ) -> None:
         self.level = policy(level).level
         self.max_input_bytes = max_input_bytes
+        self.allow_signature_invalidation = allow_signature_invalidation
         self.allow_attachment_removal = allow_attachment_removal
         self.transparency_dpi = transparency_dpi
         self._pipeline = OwnedPDFAPipeline(
@@ -130,7 +132,7 @@ class Converter:
         password: str | bytes | None = None,
         level: str | None = None,
     ) -> InspectionResult:
-        """Return conformance plus the exact owned repair plan, without writing."""
+        """Return conformance plus the conversion blockers/repair plan, without writing."""
         target = policy(level or self.level)
         data = _read(source)
         if self.max_input_bytes is not None and len(data) > self.max_input_bytes:
@@ -147,6 +149,20 @@ class Converter:
             allow_attachment_removal=self.allow_attachment_removal,
             transparency_dpi=self.transparency_dpi,
         ).plan(working, target.level)
+
+        # Conversion can preserve an already-conforming, unencrypted source
+        # byte-for-byte, so an applied signature is harmless in that one case.
+        # Any rewrite would invalidate it and therefore must be reflected by
+        # inspection under the same policy used by convert().
+        already_passthrough = validation.compliant and not encrypted
+        if not already_passthrough and not self.allow_signature_invalidation:
+            document = PDFDocument.open(working, repair=True)
+            if _has_applied_signature(document):
+                plan.block(
+                    "applied-signature",
+                    "input contains an applied digital signature; rewriting would invalidate it",
+                )
+
         return InspectionResult(target.level, validation, plan, encrypted)
 
     def preflight(
