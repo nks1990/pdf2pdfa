@@ -66,6 +66,11 @@ def _read(
     data = path.read_bytes()
     if not data:
         raise ValueError(f"input PDF is empty: {path}")
+    # Recheck after the read to close the stat/read race if the file changed.
+    if max_input_bytes is not None and len(data) > max_input_bytes:
+        raise InputLimitError(
+            f"input PDF is {len(data)} bytes, exceeding configured limit {max_input_bytes}"
+        )
     return data
 
 
