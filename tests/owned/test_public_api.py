@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 
-from pdf2pdfa import Converter
+from pdf2pdfa import Converter, __version__
 from pdf2pdfa.cli import main
 from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
@@ -56,6 +56,16 @@ def test_inspection_exposes_owned_repair_plan_without_writing():
     assert result.repairable
     assert result.validation.engine == "pdf2pdfa-owned"
     assert any("action" in operation.lower() or "javascript" in operation.lower() for operation in result.plan.operations)
+
+
+def test_cli_version_matches_package_metadata(capsys):
+    try:
+        main(["--version"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("argparse --version must terminate with exit code 0")
+    assert capsys.readouterr().out.strip() == f"pdf2pdfa {__version__}"
 
 
 def test_cli_convert_and_validate_round_trip(capsys):
