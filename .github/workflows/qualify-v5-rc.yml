@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - qualification/v5.0.0-rc1
+  pull_request:
+    branches:
+      - release/v5.0.0-rc1
 
 permissions:
   contents: read
