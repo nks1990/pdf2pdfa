@@ -8,7 +8,6 @@ and unexpected-error cases for each requested PDF/A level.
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
 import json
 from pathlib import Path
 import tempfile
@@ -184,6 +183,11 @@ def main() -> int:
     parser.add_argument("--max-input-mib", type=float, default=256.0)
     parser.add_argument("--allow-attachment-removal", action="store_true")
     parser.add_argument("--allow-signature-invalidation", action="store_true")
+    parser.add_argument(
+        "--fail-on-blocked",
+        action="store_true",
+        help="return failure if any case is explicitly fail-closed/blocked",
+    )
     args = parser.parse_args()
 
     roots = [Path(raw).expanduser().resolve() for raw in args.paths]
@@ -236,11 +240,10 @@ def main() -> int:
 
         print(json.dumps(report["summary"], indent=2, ensure_ascii=False))
 
-        bad = sum(
-            1
-            for item in cases
-            if item["status"] in {"inspect-error", "convert-error", "validation-failure"}
-        )
+        fatal_statuses = {"inspect-error", "convert-error", "validation-failure"}
+        if args.fail_on_blocked:
+            fatal_statuses.add("blocked")
+        bad = sum(1 for item in cases if item["status"] in fatal_statuses)
         return 1 if bad else 0
     finally:
         if temp is not None:
