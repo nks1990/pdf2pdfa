@@ -31,6 +31,7 @@ def main() -> int:
     args = parser.parse_args()
 
     run(sys.executable, "scripts/release_check.py")
+    run(sys.executable, "-m", "compileall", "-q", "pdf2pdfa", "scripts")
     run(sys.executable, "-m", "pytest")
 
     if args.package or args.full:
