@@ -10,10 +10,13 @@ try:
 except PackageNotFoundError:
     __version__ = "0+unknown"
 
+from .agent_protocol import MACHINE_SCHEMA_VERSION
+
 __all__ = [
     "Converter",
     "ConversionResult",
     "InspectionResult",
     "ValidationReport",
+    "MACHINE_SCHEMA_VERSION",
     "__version__",
 ]
