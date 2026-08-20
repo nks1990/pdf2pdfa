@@ -108,6 +108,38 @@ pdf2pdfa convert input.pdf output.pdf --font ./fonts/SomeFont.ttf
 pdf2pdfa convert input.pdf output.pdf --font-dir ./fonts
 ```
 
+## Agents and headless automation
+
+`pdf2pdfa` can be driven headlessly either through the Python API or through a subprocess-safe JSON CLI. The machine protocol is versioned independently from the package version; v5 ships **machine schema `1`**.
+
+```bash
+pdf2pdfa inspect input.pdf --level 2b --json
+pdf2pdfa convert input.pdf output.pdf --level 2b --json
+pdf2pdfa validate output.pdf --level 2b --json
+```
+
+Machine responses use one stable top-level envelope:
+
+```json
+{
+  "schema_version": "1",
+  "pdf2pdfa_version": "5.0.0",
+  "ok": true,
+  "status": "converted",
+  "exit_code": 0,
+  "command": "convert",
+  "result": {}
+}
+```
+
+With `--json`, normal results, validation failures, repair blockers, usage errors and runtime failures are returned as exactly one JSON document on stdout rather than requiring an agent to parse human error strings. Execution failures carry a stable `error.code`, `error.category`, concrete exception type, message and `retryable` flag.
+
+Important statuses include `compliant`, `repairable`, `blocked`, `invalid`, `converted`, `passthrough`, `completed` and `partial_failure`. Exit codes are also part of the public contract: `0` means the requested outcome/actionable inspection succeeded, `1` is a domain-level negative result such as non-compliance or partial batch failure, `2` is a blocker/input/usage/operational failure and `130` is interruption.
+
+The core does **not** embed an HTTP server or MCP runtime. A future remote adapter can import the Python API and reuse `pdf2pdfa.agent_protocol` without changing the zero-runtime-dependency owned engine.
+
+See [Agent/headless integration](docs/AGENT_INTEGRATION.md) and the formal [agent protocol v1 JSON Schema](docs/agent-protocol-v1.schema.json).
+
 ## Python API
 
 ```python
@@ -210,6 +242,7 @@ Rewriting a signed PDF invalidates the byte ranges covered by an existing signat
 pdf2pdfa/
   converter.py          public Python facade
   cli.py                stdlib argparse CLI
+  agent_protocol.py     versioned machine envelope/error contract
   native/
     document.py         parser / object resolution
     writer.py           PDF writer
@@ -228,7 +261,7 @@ pdf2pdfa/
     ...
 tests/
   native/               component and adversarial regression tests
-  owned/                package ownership and public API contracts
+  owned/                package/API/agent contracts
 scripts/
   check.py              canonical source/package/full gate
   wheel_smoke.py        isolated installed-wheel qualification
@@ -236,7 +269,7 @@ scripts/
   external_oracle_check.py  optional independent qualification oracles
 ```
 
-See [Architecture](docs/ARCHITECTURE.md), [Compliance](docs/COMPLIANCE.md), [Testing](docs/TESTING.md), [Renderer support](docs/RENDERER_SUPPORT.md), [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
+See [Architecture](docs/ARCHITECTURE.md), [Compliance](docs/COMPLIANCE.md), [Testing](docs/TESTING.md), [Agent integration](docs/AGENT_INTEGRATION.md), [Renderer support](docs/RENDERER_SUPPORT.md), [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
 
 ## Development and release checks
 
@@ -247,7 +280,7 @@ python -m pip install -e ".[dev]"
 python scripts/check.py --full
 ```
 
-`--full` runs release sanity checks, package/script compilation, the complete owned regression suite, wheel/sdist build and metadata checks, an **isolated installed-wheel smoke**, and owned end-to-end conversion/validation/fidelity smoke tests for 1b, 2b and 3b.
+`--full` runs release sanity checks, package/script compilation, the complete owned regression suite, wheel/sdist build and metadata checks, an **isolated installed-wheel smoke**, and owned end-to-end conversion/validation/fidelity smoke tests for 1b, 2b and 3b. Agent JSON/schema regressions are part of the canonical owned test suite.
 
 For release qualification beyond the generated regression corpus:
 
