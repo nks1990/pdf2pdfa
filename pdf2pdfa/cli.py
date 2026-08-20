@@ -119,12 +119,14 @@ def _parser() -> argparse.ArgumentParser:
     batch.add_argument("--json", action="store_true", dest="json_output")
     _add_common_conversion_options(batch)
 
-    inspect = sub.add_parser("inspect", aliases=["preflight"], help="show owned conformance and repair plan")
+    inspect = sub.add_parser("inspect", aliases=["preflight"], help="show owned conformance and conversion repair plan")
     inspect.add_argument("input")
     inspect.add_argument("--level", choices=LEVELS, default="2b")
     inspect.add_argument("--password-file")
     inspect.add_argument("--max-input-mib", type=int)
     inspect.add_argument("--transparency-dpi", type=int, default=144)
+    inspect.add_argument("--allow-signature-invalidation", action="store_true")
+    inspect.add_argument("--allow-attachment-removal", action="store_true")
     inspect.add_argument("--json", action="store_true", dest="json_output")
 
     validate = sub.add_parser("validate", help="validate with the owned PDF/A rule engine")
@@ -203,9 +205,13 @@ def _batch(args: argparse.Namespace) -> int:
 
 
 def _inspect(args: argparse.Namespace) -> int:
+    if args.max_input_mib is not None and args.max_input_mib <= 0:
+        raise ValueError("--max-input-mib must be positive")
     converter = Converter(
         level=args.level,
         max_input_bytes=_max_bytes(args.max_input_mib),
+        allow_signature_invalidation=args.allow_signature_invalidation,
+        allow_attachment_removal=args.allow_attachment_removal,
         transparency_dpi=args.transparency_dpi,
     )
     result = converter.inspect(args.input, password=_password(args.password_file))
