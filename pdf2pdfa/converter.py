@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .native.document import PDFDocument
+from .native.font_embed import FontEmbeddingReport
 from .native.pdfa import NativePDFAValidator, ValidationReport, policy
 from .native.pipeline import (
     FidelityMode,
@@ -17,8 +18,6 @@ from .native.pipeline import (
 )
 from .native.repair import RepairPlan
 from .native.repair_owned import OwnedRepairEngine
-from .native.security import InvalidPasswordError, SecurePDFDocument
-from .native.writer import PDFWriter
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +28,7 @@ class InspectionResult:
     validation: ValidationReport
     plan: RepairPlan
     encrypted: bool
+    fonts: FontEmbeddingReport | None = None
 
     @property
     def compliant(self) -> bool:
@@ -72,31 +72,6 @@ def _read(
             f"input PDF is {len(data)} bytes, exceeding configured limit {max_input_bytes}"
         )
     return data
-
-
-def _plaintext_for_inspection(
-    data: bytes,
-    *,
-    level: str,
-    password: str | bytes | None,
-) -> tuple[bytes, bool]:
-    probe = PDFDocument.open(data, repair=True)
-    encrypted = "Encrypt" in probe.trailer
-    if not encrypted:
-        return data, False
-    if password is None:
-        raise InvalidPasswordError("encrypted PDF requires a password for conversion inspection")
-    secure = SecurePDFDocument.open_secure(data, password, repair=True)
-    secure.remove_encryption_for_write()
-    target = policy(level)
-    return (
-        PDFWriter(
-            secure,
-            version="1.4" if target.part == 1 else "1.7",
-            reachable_only=True,
-        ).to_bytes(),
-        True,
-    )
 
 
 class Converter:
@@ -157,14 +132,49 @@ class Converter:
         *,
         password: str | bytes | None = None,
         level: str | None = None,
+        font_paths: Iterable[str | Path | bytes] | None = None,
+        font_directories: Iterable[str | Path] | None = None,
     ) -> InspectionResult:
-        """Return conformance plus the conversion blockers/repair plan, without writing."""
+        """Dry-run the conversion preparation and return validation/repair blockers.
+
+        Inspection follows the same pre-repair path as :meth:`convert`: it
+        handles encryption, signature policy, explicit font preprocessing and
+        profile-specific serialization before asking the repair engine for a
+        plan. No destination is written.
+        """
         target = policy(level or self.level)
         data = _read(source, self.max_input_bytes)
-        working, encrypted = _plaintext_for_inspection(
+
+        raw_probe = PDFDocument.open(data, repair=True)
+        encrypted_source = "Encrypt" in raw_probe.trailer
+        if not encrypted_source:
+            initial = NativePDFAValidator().validate(data, target.level)
+            if initial.compliant:
+                return InspectionResult(
+                    target.level,
+                    initial,
+                    RepairPlan(target.level, operations=["byte-for-byte passthrough"]),
+                    False,
+                    None,
+                )
+
+        document, encrypted_source = self._pipeline._load_document(  # noqa: SLF001
             data,
-            level=target.level,
             password=password,
+        )
+        signature_blocked = (
+            _has_applied_signature(document)
+            and not self.allow_signature_invalidation
+        )
+
+        font_report = self._pipeline._preprocess_fonts(  # noqa: SLF001
+            document,
+            font_paths=font_paths,
+            font_directories=font_directories,
+        )
+        working = self._pipeline._serialize_working_document(  # noqa: SLF001
+            document,
+            target.level,
         )
         validation = NativePDFAValidator().validate(working, target.level)
         plan = OwnedRepairEngine(
@@ -172,29 +182,35 @@ class Converter:
             transparency_dpi=self.transparency_dpi,
         ).plan(working, target.level)
 
-        # Conversion can preserve an already-conforming, unencrypted source
-        # byte-for-byte, so an applied signature is harmless in that one case.
-        # Any rewrite would invalidate it and therefore must be reflected by
-        # inspection under the same policy used by convert().
-        already_passthrough = validation.compliant and not encrypted
-        if not already_passthrough and not self.allow_signature_invalidation:
-            document = PDFDocument.open(working, repair=True)
-            if _has_applied_signature(document):
-                plan.block(
-                    "applied-signature",
-                    "input contains an applied digital signature; rewriting would invalidate it",
-                )
+        if signature_blocked:
+            plan.block(
+                "applied-signature",
+                "input contains an applied digital signature; rewriting would invalidate it",
+            )
 
-        return InspectionResult(target.level, validation, plan, encrypted)
+        return InspectionResult(
+            target.level,
+            validation,
+            plan,
+            encrypted_source,
+            font_report,
+        )
 
     def preflight(
         self,
         source: str | Path | bytes,
         *,
         password: str | bytes | None = None,
+        font_paths: Iterable[str | Path | bytes] | None = None,
+        font_directories: Iterable[str | Path] | None = None,
     ) -> InspectionResult:
         """Backward-friendly alias for :meth:`inspect`."""
-        return self.inspect(source, password=password)
+        return self.inspect(
+            source,
+            password=password,
+            font_paths=font_paths,
+            font_directories=font_directories,
+        )
 
     def convert(
         self,
