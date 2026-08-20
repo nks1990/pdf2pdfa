@@ -9,6 +9,7 @@ from pathlib import Path
 import sys
 from typing import Sequence
 
+from . import __version__
 from .converter import Converter, InspectionResult
 from .native.pdfa import ValidationReport
 
@@ -98,6 +99,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="pdf2pdfa",
         description="Convert and validate PDF/A using only the repository-owned engine.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
