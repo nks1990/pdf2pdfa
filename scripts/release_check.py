@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -67,6 +68,7 @@ def main() -> int:
         ROOT / "CONTRIBUTING.md",
         ROOT / "MANIFEST.in",
         ROOT / "docs" / "AGENT_INTEGRATION.md",
+        ROOT / "docs" / "agent-protocol-v1.schema.json",
         ROOT / "docs" / "ARCHITECTURE.md",
         ROOT / "docs" / "COMPLIANCE.md",
         ROOT / "docs" / "RENDERER_SUPPORT.md",
@@ -94,6 +96,14 @@ def main() -> int:
     protocol_text = (ROOT / "pdf2pdfa" / "agent_protocol.py").read_text(encoding="utf-8")
     if 'MACHINE_SCHEMA_VERSION = "1"' not in protocol_text:
         fail("agent machine protocol schema v1 contract is missing")
+
+    schema_path = ROOT / "docs" / "agent-protocol-v1.schema.json"
+    try:
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        fail(f"agent protocol JSON schema is invalid: {exc}")
+    if schema.get("properties", {}).get("schema_version", {}).get("const") != "1":
+        fail("agent protocol JSON schema must describe schema_version 1")
 
     workflow_dir = ROOT / ".github" / "workflows"
     workflows = (
