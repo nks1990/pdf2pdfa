@@ -10,7 +10,7 @@ from pdf2pdfa.native.builder import PDFBuilder
 from pdf2pdfa.native.objects import PDFDict, PDFName, PDFStream
 
 
-def _source(*, javascript: bool = False) -> bytes:
+def _source(*, javascript: bool = False, applied_signature: bool = False) -> bytes:
     builder = PDFBuilder(version="1.7")
     contents = builder.add(PDFStream(PDFDict(), b"0 0 0 rg\n10 10 40 40 re f\n"))
     pages = PDFDict({"Type": PDFName("Pages"), "Count": 1, "Kids": []})
@@ -32,6 +32,19 @@ def _source(*, javascript: bool = False) -> bytes:
         catalog["OpenAction"] = PDFDict(
             {"S": PDFName("JavaScript"), "JS": b"app.alert('x')"}
         )
+    if applied_signature:
+        signature = builder.add(
+            PDFDict(
+                {
+                    "Type": PDFName("Sig"),
+                    "Filter": PDFName("Adobe.PPKLite"),
+                    "SubFilter": PDFName("adbe.pkcs7.detached"),
+                    "ByteRange": [0, 1, 2, 3],
+                    "Contents": b"synthetic-signature",
+                }
+            )
+        )
+        catalog["OwnedTestSignature"] = signature
     root = builder.add(catalog)
     builder.set_root(root)
     return builder.to_bytes()
@@ -56,6 +69,44 @@ def test_inspection_exposes_owned_repair_plan_without_writing():
     assert result.repairable
     assert result.validation.engine == "pdf2pdfa-owned"
     assert any("action" in operation.lower() or "javascript" in operation.lower() for operation in result.plan.operations)
+
+
+def test_inspection_reports_applied_signature_rewrite_blocker():
+    source = _source(applied_signature=True)
+    blocked = Converter(level="2b").inspect(source)
+    assert not blocked.repairable
+    assert any(item.code == "applied-signature" for item in blocked.plan.blockers)
+
+    intentional = Converter(
+        level="2b",
+        allow_signature_invalidation=True,
+    ).inspect(source)
+    assert all(item.code != "applied-signature" for item in intentional.plan.blockers)
+
+
+def test_cli_inspect_signature_override_matches_converter_policy(capsys):
+    with tempfile.TemporaryDirectory() as tempdir_name:
+        source = Path(tempdir_name) / "signed.pdf"
+        source.write_bytes(_source(applied_signature=True))
+
+        assert main(["inspect", str(source), "--level", "2b", "--json"]) == 2
+        blocked = json.loads(capsys.readouterr().out)
+        assert blocked["repairable"] is False
+        assert any(item["code"] == "applied-signature" for item in blocked["plan"]["blockers"])
+
+        code = main(
+            [
+                "inspect",
+                str(source),
+                "--level",
+                "2b",
+                "--allow-signature-invalidation",
+                "--json",
+            ]
+        )
+        intentional = json.loads(capsys.readouterr().out)
+        assert code in (0, 2)
+        assert all(item["code"] != "applied-signature" for item in intentional["plan"]["blockers"])
 
 
 def test_cli_version_matches_package_metadata(capsys):
