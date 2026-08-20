@@ -15,6 +15,8 @@ through that renderer.
 - Embedded Type1 PFA/PFB, StandardEncoding/Differences, `seac` and standard Flex OtherSubrs.
 - Type3 CharProcs, 2D FontMatrix advance and PDF text-rendering-mode semantics.
 - Type0 horizontal and vertical text state with DW2/W2 metrics.
+- Algorithmic `Identity-H` / `Identity-V` CMaps and compiled Adobe-Japan1
+  `90ms-RKSJ-H` / `90ms-RKSJ-V` predefined mappings.
 - Device and owned ICC color transforms.
 - Raw/filtered images, baseline JPEG and CCITT Group 3/4/mixed fax.
 - Image masks and soft masks in ordinary transparency rendering.
@@ -78,13 +80,19 @@ rendered as ordinary source-over transparency.
 
 ## Remaining explicit renderer blockers
 
-- Adobe predefined non-Identity CMap mapping data (Japan1/GB1/CNS1/Korea1 families).
+- Additional Adobe predefined non-Identity CMap mapping data beyond the
+  currently compiled Japan1 `90ms-RKSJ-H` / `90ms-RKSJ-V` mappings, including
+  broader Japan1 and GB1/CNS1/Korea1 families.
 - JPX / JPEG 2000 image decoding.
 - JBIG2 image decoding.
 - Explicit non-RGB transparency-group blending spaces.
 - The advanced knockout interactions listed above.
 - Annotation display geometry that depends on `NoZoom`, `NoRotate` or
   `ToggleNoView` and is not yet reproduced by the owned visual model.
+
+These blockers are release-compatible only because they are fail-closed: if a
+conversion or fidelity operation requires one of them, the engine must reject
+that operation explicitly rather than approximate or delegate it.
 
 ## Release rule
 
